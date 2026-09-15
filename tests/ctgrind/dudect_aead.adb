@@ -10,6 +10,7 @@
 --  inspection so this should hold easily, but proving it with a
 --  test is the right hygiene.
 
+with Interfaces;      use type Interfaces.Unsigned_8;
 with SPARKNaCl;       use SPARKNaCl;
 with SPARKNaCl.Core;
 with SPARKTLSCrypto.ChaCha20_Poly1305;
@@ -26,36 +27,39 @@ procedure Dudect_AEAD is
    --  Two distinct keys to compare timing across.
    K0_Bytes : constant Bytes_32 := (others => 16#00#);
    K1_Bytes : constant Bytes_32 := (others => 16#FF#);
-   K0, K1   : aliased SPARKNaCl.Core.ChaCha20_Key;
 
    C   : aliased Byte_Seq (0 .. 4095);
    Tag : Bytes_16;
 
-   --  One code path for both classes (see dudect_p256_ecdsa.adb): the
-   --  class only selects which key the shared subprogram reads.
-   Cur : access SPARKNaCl.Core.ChaCha20_Key;
+   --  dudect shape (see Dudect_Helpers): Prepare selects the class's
+   --  key into the shared Cur buffer untimed, and the timed Subject is
+   --  one subprogram reading one address for both classes. The class
+   --  Boolean is consumed as a mask, never branched on, so the two
+   --  classes run one instruction stream on one set of addresses and
+   --  only the key bytes differ. That matters at this subject's cost:
+   --  ~5K cycles per call at n = 20K puts the standard error near 0.3
+   --  cycles, and two subject closures (two code addresses, two key
+   --  objects) read t up to ~12 with IDENTICAL keys on a quiet box.
+   Cur : SPARKNaCl.Core.ChaCha20_Key;
+   procedure Prep (Second : Boolean) is
+      Mask : constant Byte := Byte (Boolean'Pos (Second)) * Byte'Last;
+      KB   : Bytes_32;
+   begin
+      for I in KB'Range loop
+         KB (I) := (K0_Bytes (I) and not Mask) or (K1_Bytes (I) and Mask);
+      end loop;
+      SPARKNaCl.Core.Construct (Cur, KB);
+   end Prep;
    procedure Encrypt_Cur is
    begin
       SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt
-        (C => C, Tag => Tag, M => M, N => Nonce, K => Cur.all, AAD => AAD);
+        (C => C, Tag => Tag, M => M, N => Nonce, K => Cur, AAD => AAD);
    end Encrypt_Cur;
-   procedure Sub_0 is
-   begin
-      Cur := K0'Access;
-      Encrypt_Cur;
-   end Sub_0;
-   procedure Sub_1 is
-   begin
-      Cur := K1'Access;
-      Encrypt_Cur;
-   end Sub_1;
 begin
-   SPARKNaCl.Core.Construct (K0, K0_Bytes);
-   SPARKNaCl.Core.Construct (K1, K1_Bytes);
    Dudect_Helpers.Time_Test
      (Name      =>
         "ChaCha20-Poly1305 Encrypt 4KiB (K=zeros vs K=ones, opt build)",
-      Subject_0 => Sub_0'Access,
-      Subject_1 => Sub_1'Access,
+      Prepare   => Prep'Access,
+      Subject   => Encrypt_Cur'Access,
       N         => 20_000);   --  ~5 us per call: 10x the sample of the EC harnesses
 end Dudect_AEAD;

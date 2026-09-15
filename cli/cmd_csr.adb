@@ -66,12 +66,9 @@ package body Cmd_CSR is
          K : constant String := Argument (6);
          O : constant String := Argument (8);
       begin
-         Name_Len := Natural'Min (N'Length, Name'Length);
-         Name (1 .. Name_Len) := N (N'First .. N'First + Name_Len - 1);
-         Key_Len := Natural'Min (K'Length, Key_Path'Length);
-         Key_Path (1 .. Key_Len) := K (K'First .. K'First + Key_Len - 1);
-         Out_Len := Natural'Min (O'Length, Out_Path'Length);
-         Out_Path (1 .. Out_Len) := O (O'First .. O'First + Out_Len - 1);
+         CLI_Util.Fit (N, Name, Name_Len, "name");
+         CLI_Util.Fit (K, Key_Path, Key_Len, "key path");
+         CLI_Util.Fit (O, Out_Path, Out_Len, "output path");
       end;
 
       --  Parse optional with-san
@@ -96,8 +93,7 @@ package body Cmd_CSR is
                            SAN_Count := SAN_Count + 1;
                            declare
                               Len : constant Natural :=
-                                 Natural'Min (S'Length,
-                                    SANs (SAN_Count).Name'Length);
+                                 CLI_Util.Fit_Len (S'Length, SANs (SAN_Count).Name'Length, "S");
                               All_Digits : Boolean := True;
                            begin
                               SANs (SAN_Count).Name (1 .. Len) :=
@@ -238,7 +234,21 @@ package body Cmd_CSR is
                return;
             end if;
 
-            Put_Line ("CSR subject: CN=" & Subject.CN (1 .. Subject.CN_Len));
+            --  Proof of possession (RFC 2986 4.2): the request must be
+            --  signed by the key it asks us to certify.
+            declare
+               PoP_OK : Boolean;
+            begin
+               CSR_Builder.Verify_CSR (CSR_PEM.DER (0 .. CSR_PEM.DER_Len - 1), PoP_OK);
+               if not PoP_OK then
+                  Put_Line (Standard_Error,
+                            "CSR signature does not verify with the key it carries; refusing to sign");
+                  Set_Exit_Status (1);
+                  return;
+               end if;
+            end;
+
+            Put_Line ("CSR subject: CN=" & CLI_Util.Printable (Subject.CN (1 .. Subject.CN_Len)));
 
             --  Load CA key
             declare
@@ -299,8 +309,7 @@ package body Cmd_CSR is
                                 (CA_PEM.DER (0 .. CA_PEM.DER_Len - 1),
                                  CN_Span);
                            L : constant Natural :=
-                              Natural'Min (CN'Length,
-                                 Params.Issuer.CN'Length);
+                              CLI_Util.Fit_Len (CN'Length, Params.Issuer.CN'Length, "CN");
                         begin
                            Params.Issuer.CN (1 .. L) :=
                               CN (CN'First .. CN'First + L - 1);
@@ -314,8 +323,7 @@ package body Cmd_CSR is
                                 (CA_PEM.DER (0 .. CA_PEM.DER_Len - 1),
                                  Org_Span);
                            L : constant Natural :=
-                              Natural'Min (O'Length,
-                                 Params.Issuer.Org'Length);
+                              CLI_Util.Fit_Len (O'Length, Params.Issuer.Org'Length, "O");
                         begin
                            Params.Issuer.Org (1 .. L) :=
                               O (O'First .. O'First + L - 1);
@@ -326,10 +334,14 @@ package body Cmd_CSR is
                      --  Subject from CSR
                      Params.Subject := Subject;
                      Params.Key := CA_Key;
+                     --  Authority Key Identifier = the CA's key identifier.
+                     Cert_Builder.Set_Issuer_Key_ID
+                       (Params, CA_PEM.DER (0 .. CA_PEM.DER_Len - 1), CA_Cert);
                      Params.SPKI (0 .. SPKI_Len - 1) :=
                         SPKI (0 .. SPKI_Len - 1);
                      Params.SPKI_Len := SPKI_Len;
                      Params.Is_CA := False;
+                     Params.Has_EKU_Server_Auth := True;
                      Params.Valid_Days := Days;
 
                      --  TODO: extract SANs from CSR extensionRequest

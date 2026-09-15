@@ -43,79 +43,167 @@
 #    these are accepted expected failures. TLS 1.3 Ed25519 (both roles)
 #    remains fully supported. See cert_verify.adb Verify_Signature_Hashed
 #    Ed25519 comment.
-Basic-Client-RenewTicket-TLS-Async
-Basic-Client-RenewTicket-TLS-Async-ImplicitHandshake
-Basic-Client-RenewTicket-TLS-Async-PackHandshake
-Basic-Client-RenewTicket-TLS-Async-SplitHandshakeRecords
-Basic-Client-RenewTicket-TLS-Sync
-Basic-Client-RenewTicket-TLS-Sync-ImplicitHandshake
-Basic-Client-RenewTicket-TLS-Sync-PackHandshake
-Basic-Client-RenewTicket-TLS-Sync-SplitHandshakeRecords
-CertificateRequestInResumption-TLS13
+#
+# 2026-09-14 UPDATE (chore/bogo, verify-callback flags): the shim now
+# implements -verify-fail / -expect-verify-result / -use-custom-verify-callback /
+# -reverify-on-resume / -use-old-client-cert-callback, and the overbroad
+# '*Fail*Callback*' skip glob that hid the CustomCallback variants is gone.
+# 1073 -> 1217 passing. The newly VISIBLE failures fall in three groups:
+#
+#  (a) CertificateVerificationFail-{Client,Server}-*-TLS-Sync* (32): with
+#      -verify-fail the handshake is refused as required, but BoGo's Sync
+#      variants also pin the alert: handshake_failure (40) for BoringSSL's
+#      legacy callback, certificate_unknown (46) for the custom one. We send
+#      bad_certificate (42): BoGo's test leaf has an EMPTY subject with a
+#      NON-critical SAN, which RFC 5280 4.2.1.6 forbids and x509-limbo expects
+#      rejected, so chain validation fails structurally before the application
+#      veto hook (which would send 46) can run. Alert-choice deviation only;
+#      the Async variants of the same cases pass.
+#  (b) CertificateVerificationFailsOnResume-Client-*-CustomCallback-* (16):
+#      -reverify-on-resume re-runs verification against the certificate
+#      stored in the session. SPARKTLS tickets carry no peer chain, so a
+#      resumed session is never re-verified. Documented gap.
+#  (c) CertificateVerification{Succeed,DoesNotFailOnResume}-Server-*-
+#      CustomCallback-*-{PackHandshake,SplitHandshakeRecords} (16): the same
+#      server-side bug as the ClientAuth-*-Server-*-{Pack,Split} entries:
+#      client-auth flights packed into one record / split across records are
+#      answered with decode_error. Real bug, owned by the BoGo sweep.
+#
+# Two CertificateSelection-Server-CertificateType-MatchesRawPublicKeyOverX509-
+# MatchNone-* entries left the list: raw public keys are now an explicit
+# out-of-scope skip ('*RawPublicKey*').
+#
+# 2026-09-14 UPDATE 2 (chore/bogo, packed/split client flights): group (c)
+# above is GONE, together with the older ClientAuth-*-Server-*-{PackHandshake,
+# SplitHandshakeRecords} entries: the server now reads the client's
+# authentication flight as a message stream on both versions (TLS 1.3
+# Process_Client_Auth pump; TLS 1.2 Process_Client_Handshake_Record_12), so
+# messages packed into one record or split across records reassemble. Also
+# gone: the 112 OCSP cases (server-side stapling implemented). 1217 -> 1377
+# passing, 138 -> 90 known failures.
+#
+# 2026-09-14 UPDATE 3 (chore/bogo, resumption + PSK details): 1377 -> 1393
+# passing, 90 -> 66 known failures. Fixed: TLS 1.2 client never recorded the
+# session_id length it sent, so a server echo (RFC 5077 3.4) was invisible
+# (Basic-Client-RenewTicket-*, EchoTLS13CompatibilitySessionID); PSK binder
+# transcript now excludes the whole binders list (ExtraPSKIdentity-TLS13);
+# psk_key_exchange_modes without a supported mode declines the PSK instead of
+# missing_extension; ticket_flags must be minimally encoded; TLS 1.2 server
+# answers an Ed25519 CertificateVerify with illegal_parameter; -on-resume-
+# no-ticket and Config.TLS12_Offer_Session_Ticket in the shim. Reclassified as
+# out of scope (skip globs with reasons): Resume-Server-Decline{BadCipher,
+# CrossVersion}* (BoringSSL ticket format), Resume-Server-NoTickets-* and
+# TLS12-NoTicket-NoMint (session-ID resumption), Resume-Server-
+# CipherNotPreferred (CBC).
+#
+# Still open, one case each: Resume-Server-NoPSKBinder-SecondBinder (BoGo
+# wants decode_error where we say illegal_parameter for a binder-count
+# mismatch, the alert the sibling Extra* cases require) and
+# CertificateRequestInResumption-TLS13 (our client does not resume after an
+# mTLS session in this configuration; not yet diagnosed).
+#
+# 2026-09-14 UPDATE 4 (chore/bogo, multi-credential selection): Config.Identities
+# (server-side identity set chosen by the client's signature_algorithms,
+# cipher-suite family, ECDSA curve and, for Must_Match_Issuer identities, its
+# certificate_authorities), per-identity Sign_Prefs honoured by selection and
+# by the scheme negotiators, Select_Client_Identity gets certificate_types,
+# Local_Identity accessor; shim credential blocks + -expect-selected-credential.
+# 1393 -> 1461 passing; unimplemented 117 -> 5. The CertificateSelection cases
+# still listed are all CLIENT side:
+#  (d) *-MatchNone-* (12): no configured credential fits the CertificateRequest.
+#      RFC 8446 4.4.2 / RFC 5246 7.4.6 say the client MUST then send an empty
+#      Certificate, which we do; BoringSSL aborts with handshake_failure and
+#      BoGo pins that. Intentional deviation.
+#  (e) Client-ClientCertificateTypes-ECDSA-Ed25519-* (4): Ed25519 client
+#      authentication in TLS 1.2 is declined by design (see the Ed25519 notes).
+#  (f) Client-SignatureAlgorithmECDSACurve-TLS-TLS12 (1): a P-384 client key
+#      offered only ecdsa_secp256r1_sha256; TLS 1.2 lets ECDSA hash and curve
+#      be independent, our signer binds P-384 to SHA-384. Gap.
+#
+# 2026-09-14 UPDATE 5 (chore/bogo, one-off investigation): 1462 -> 1464
+# passing, 74 -> 70 known failures. Two were REAL BUGS:
+#  - CertificateRequestInResumption-TLS13: the client silently dropped any
+#    TLS 1.3 ticket longer than 256 bytes (Max_Ticket_Len). Servers embed the
+#    client's certificate chain in the ticket after mutual authentication
+#    (OpenSSL 3: 208 bytes plain, 1072 with a client cert; Go about 830), so
+#    no mTLS session ever resumed. Cap raised to 2048, matching TLS 1.2.
+#  - Resume-Server-NoPSKBinder-SecondBinder: after HelloRetryRequest the
+#    server replaced every CH2 PARSE error with illegal_parameter; a
+#    truncated binders list is decode_error in CH2 as in CH1. The CH1/CH2
+#    consistency checks keep illegal_parameter.
+# Two moved to the out-of-scope skip list: {Client,Server}-VerifyDefault-
+# Ed25519-TLS13 assert BoringSSL's default verify-preference table (Ed25519
+# off unless enabled); SPARKTLS accepts Ed25519 by default, as browsers do.
+# Still open and understood: (f) above, the TLS 1.2 ECDSA hash/curve
+# decoupling, which needs the P-384 signer to take a SHA-256 digest and the
+# scheme matcher to relax the curve in TLS 1.2 mode.
+CertificateSelection-Client-CheckIssuer-MatchNone-TLS-TLS12
+CertificateSelection-Client-CheckIssuer-MatchNone-TLS-TLS13
+CertificateSelection-Client-CheckIssuerFallback-MatchNone-TLS-TLS12
+CertificateSelection-Client-CheckIssuerFallback-MatchNone-TLS-TLS13
+CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchDefault-TLS-TLS12
+CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchFirst-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchNone-TLS-TLS12
+CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchSecond-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-ECDSA-MatchNone-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-RSA-Ed25519-MatchNone-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-RSA-MatchNone-TLS-TLS12
-CertificateSelection-Client-SignatureAlgorithmKeyPrefs-MatchNone-TLS-TLS12
 CertificateSelection-Client-SignatureAlgorithm-MatchNone-TLS-TLS12
-CertificateSelection-Server-CertificateType-MatchesRawPublicKeyOverX509-MatchNone-TLS-TLS12
-CertificateSelection-Server-CertificateType-MatchesRawPublicKeyOverX509-MatchNone-TLS-TLS13
-CertificateSelection-Server-CertificateType-Unknown-X509-MatchNone-TLS-TLS12
-CertificateSelection-Server-CertificateType-Unknown-X509-MatchNone-TLS-TLS13
-CertificateSelection-Server-CipherSuite-NoECDHE-MatchNone-TLS-TLS12
-CertificateVerificationDoesNotFailOnResume-Server-TLS12-TLS-Async-PackHandshake
-CertificateVerificationDoesNotFailOnResume-Server-TLS12-TLS-Async-SplitHandshakeRecords
-CertificateVerificationDoesNotFailOnResume-Server-TLS12-TLS-Sync-PackHandshake
-CertificateVerificationDoesNotFailOnResume-Server-TLS12-TLS-Sync-SplitHandshakeRecords
-CertificateVerificationDoesNotFailOnResume-Server-TLS13-TLS-Async-PackHandshake
-CertificateVerificationDoesNotFailOnResume-Server-TLS13-TLS-Async-SplitHandshakeRecords
-CertificateVerificationDoesNotFailOnResume-Server-TLS13-TLS-Sync-PackHandshake
-CertificateVerificationDoesNotFailOnResume-Server-TLS13-TLS-Sync-SplitHandshakeRecords
-CertificateVerificationSucceed-Server-TLS12-TLS-Async-PackHandshake
-CertificateVerificationSucceed-Server-TLS12-TLS-Async-SplitHandshakeRecords
-CertificateVerificationSucceed-Server-TLS12-TLS-Sync-PackHandshake
-CertificateVerificationSucceed-Server-TLS12-TLS-Sync-SplitHandshakeRecords
-CertificateVerificationSucceed-Server-TLS13-TLS-Async-PackHandshake
-CertificateVerificationSucceed-Server-TLS13-TLS-Async-SplitHandshakeRecords
-CertificateVerificationSucceed-Server-TLS13-TLS-Sync-PackHandshake
-CertificateVerificationSucceed-Server-TLS13-TLS-Sync-SplitHandshakeRecords
-ClientAuth-NoCertificate-Server-TLS13-TLS-Async-PackHandshake
-ClientAuth-NoCertificate-Server-TLS13-TLS-Async-SplitHandshakeRecords
-ClientAuth-NoCertificate-Server-TLS13-TLS-Sync-PackHandshake
-ClientAuth-NoCertificate-Server-TLS13-TLS-Sync-SplitHandshakeRecords
-ClientAuth-NoCertificate-Server-TLS-Async-PackHandshake
-ClientAuth-NoCertificate-Server-TLS-Async-SplitHandshakeRecords
-ClientAuth-NoCertificate-Server-TLS-Sync-PackHandshake
-ClientAuth-NoCertificate-Server-TLS-Sync-SplitHandshakeRecords
-ClientAuth-Server-TLS13-TLS-Async-PackHandshake
-ClientAuth-Server-TLS13-TLS-Async-SplitHandshakeRecords
-ClientAuth-Server-TLS13-TLS-Sync-PackHandshake
-ClientAuth-Server-TLS13-TLS-Sync-SplitHandshakeRecords
-ClientAuth-Server-TLS-Async-PackHandshake
-ClientAuth-Server-TLS-Async-SplitHandshakeRecords
-ClientAuth-Server-TLS-Sync-PackHandshake
-ClientAuth-Server-TLS-Sync-SplitHandshakeRecords
-Client-SignDefault-Ed25519-TLS12
+CertificateSelection-Client-SignatureAlgorithm-MatchNone-TLS-TLS13
+CertificateSelection-Client-SignatureAlgorithmECDSACurve-MatchNone-TLS-TLS13
+CertificateSelection-Client-SignatureAlgorithmECDSACurve-TLS-TLS12
+CertificateSelection-Client-SignatureAlgorithmKeyPrefs-MatchNone-TLS-TLS12
+CertificateSelection-Client-SignatureAlgorithmKeyPrefs-MatchNone-TLS-TLS13
+CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync
+CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync-PackHandshake
+CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Client-TLS12-TLS-Sync
+CertificateVerificationFail-Client-TLS12-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Client-TLS12-TLS-Sync-PackHandshake
+CertificateVerificationFail-Client-TLS12-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Client-TLS13-CustomCallback-TLS-Sync
+CertificateVerificationFail-Client-TLS13-CustomCallback-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Client-TLS13-CustomCallback-TLS-Sync-PackHandshake
+CertificateVerificationFail-Client-TLS13-CustomCallback-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Client-TLS13-TLS-Sync
+CertificateVerificationFail-Client-TLS13-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Client-TLS13-TLS-Sync-PackHandshake
+CertificateVerificationFail-Client-TLS13-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Server-TLS12-CustomCallback-TLS-Sync
+CertificateVerificationFail-Server-TLS12-CustomCallback-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Server-TLS12-CustomCallback-TLS-Sync-PackHandshake
+CertificateVerificationFail-Server-TLS12-CustomCallback-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Server-TLS12-TLS-Sync
+CertificateVerificationFail-Server-TLS12-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Server-TLS12-TLS-Sync-PackHandshake
+CertificateVerificationFail-Server-TLS12-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Server-TLS13-CustomCallback-TLS-Sync
+CertificateVerificationFail-Server-TLS13-CustomCallback-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Server-TLS13-CustomCallback-TLS-Sync-PackHandshake
+CertificateVerificationFail-Server-TLS13-CustomCallback-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFail-Server-TLS13-TLS-Sync
+CertificateVerificationFail-Server-TLS13-TLS-Sync-ImplicitHandshake
+CertificateVerificationFail-Server-TLS13-TLS-Sync-PackHandshake
+CertificateVerificationFail-Server-TLS13-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Async
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Async-ImplicitHandshake
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Async-PackHandshake
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Async-SplitHandshakeRecords
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Sync
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Sync-ImplicitHandshake
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Sync-PackHandshake
+CertificateVerificationFailsOnResume-Client-TLS12-CustomCallback-TLS-Sync-SplitHandshakeRecords
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Async
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Async-ImplicitHandshake
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Async-PackHandshake
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Async-SplitHandshakeRecords
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Sync
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Sync-ImplicitHandshake
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Sync-PackHandshake
+CertificateVerificationFailsOnResume-Client-TLS13-CustomCallback-TLS-Sync-SplitHandshakeRecords
 Client-Sign-Ed25519-TLS12
 Client-Sign-Negotiate-Ed25519-TLS12
+Client-SignDefault-Ed25519-TLS12
 Client-VerifyDefault-Ed25519-TLS12
-Client-VerifyDefault-Ed25519-TLS13
-EchoTLS13CompatibilitySessionID
-ExtraPSKIdentity-TLS13
-Resume-Server-CipherNotPreferred
-Resume-Server-DeclineBadCipher
-Resume-Server-DeclineBadCipher-2
-Resume-Server-DeclineBadCipher-TLS13
-Resume-Server-DeclineCrossVersion
-Resume-Server-DeclineCrossVersion-TLS13
-Resume-Server-NoPSKBinder-SecondBinder
-Resume-Server-NoTickets-TLS12-TLS12-TLS
-Server-VerifyDefault-Ed25519-TLS12
-Server-VerifyDefault-Ed25519-TLS13
 Server-Verify-Ed25519-TLS12
-TLS12-NoTicket-NoAccept
-TLS12-NoTicket-NoMint
-TLS12-NoTicket-NoOffer
-TLS13-Client-NonminimalTicketFlags
-TLS13-NoTicket-NoAccept
-TLS13-SendBadKEModeSessionTicket-Server

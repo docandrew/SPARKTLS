@@ -190,7 +190,7 @@ procedure TLS_Fetch is
    Res : SPARKTLS.Action;
 
    --  Network I/O buffer
-   Net_Buf : Byte_Seq (0 .. 16383);
+   Net_Buf : Byte_Seq (0 .. 16644);   --  5-byte header + 2^14 + 256 (RFC 8446 5.2)
    N       : N32;
 
    --  URL components
@@ -306,6 +306,7 @@ begin
               Host, Host_Len, Port, Path, Path_Len, URL_OK);
 
    if not URL_OK then
+      Ada.Command_Line.Set_Exit_Status (2);
       return;
    end if;
 
@@ -313,6 +314,15 @@ begin
       Hostname : constant String := Host (1 .. Host_Len);
       Pathstr  : constant String := Path (1 .. Path_Len);
    begin
+      --  These go into the request line verbatim: refuse anything that
+      --  could split or forge a header.
+      if (for some C of String'(Hostname & Pathstr) =>
+            Character'Pos (C) < 33 or else Character'Pos (C) > 126)
+      then
+         Put_Line (Standard_Error, "Error: control characters or spaces in URL");
+         Ada.Command_Line.Set_Exit_Status (2);
+         return;
+      end if;
       if Verbose then
          Put_Line ("* Host: " & Hostname);
          Put_Line ("* Port:" & Port'Image);
@@ -375,6 +385,8 @@ begin
             Put_Line
               (Standard_Error,
                "Error: failed to load trust roots; use --cafile or --insecure");
+            Ada.Command_Line.Set_Exit_Status (1);
+            SPARKTLS.Drop (S);
             GNAT.Sockets.Close_Socket (Sock);
             return;
          end if;
@@ -424,6 +436,8 @@ begin
                --  a generic Internal_Error.
                if SPARKTLS.State (S) = SPARKTLS.Error_State then
                   Put_Line ("TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
+                  Ada.Command_Line.Set_Exit_Status (1);
+                  SPARKTLS.Drop (S);
                   GNAT.Sockets.Close_Socket (Sock);
                   return;
                end if;
@@ -435,6 +449,8 @@ begin
                   Read_Record (Channel, S, Net_Buf, Done);
                   if Done then
                      Put_Line ("Error: connection closed during handshake");
+            Ada.Command_Line.Set_Exit_Status (1);
+                     SPARKTLS.Drop (S);
                      GNAT.Sockets.Close_Socket (Sock);
                      return;
                   end if;
@@ -474,11 +490,15 @@ begin
 
             when SPARKTLS.Error_Alert =>
                Put_Line ("TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
+                  Ada.Command_Line.Set_Exit_Status (1);
+               SPARKTLS.Drop (S);
                GNAT.Sockets.Close_Socket (Sock);
                return;
 
             when SPARKTLS.Shutdown =>
                Put_Line ("Error: server closed connection during handshake");
+            Ada.Command_Line.Set_Exit_Status (1);
+               SPARKTLS.Drop (S);
                GNAT.Sockets.Close_Socket (Sock);
                return;
 
@@ -560,6 +580,9 @@ begin
             App_N        : N32;
             In_Headers   : Boolean := True;
             Done         : Boolean := False;
+            --  The peer's close_notify is the only clean end: a TCP close
+            --  without it may be a truncation attack on the body.
+            Clean_Close  : Boolean := False;
          begin
             Receive_Loop : loop
                exit Receive_Loop when Done;
@@ -620,6 +643,7 @@ begin
                         end if;
 
                      when SPARKTLS.Shutdown =>
+                        Clean_Close := True;
                         Done := True;
                         exit Process_Loop;
 
@@ -628,6 +652,7 @@ begin
                            Put_Line (Standard_Error,
                               "TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
                         end if;
+                        Ada.Command_Line.Set_Exit_Status (1);
                         Done := True;
                         exit Process_Loop;
 
@@ -639,6 +664,11 @@ begin
                   end case;
                end loop Process_Loop;
             end loop Receive_Loop;
+            if not Clean_Close and then State (S) = SPARKTLS.Connected then
+               Put_Line (Standard_Error,
+                  "Error: connection ended without close_notify; the response may be truncated");
+               Ada.Command_Line.Set_Exit_Status (1);
+            end if;
          end;
 
          --  Clean shutdown
@@ -655,6 +685,8 @@ begin
          end if;
       end if;
 
+      SPARKTLS.Drop (S);
+
       GNAT.Sockets.Close_Socket (Sock);
    end;
 
@@ -662,7 +694,9 @@ exception
    when E : others =>
       Put_Line (Standard_Error,
          "Fatal: " & Ada.Exceptions.Exception_Message (E));
+      Ada.Command_Line.Set_Exit_Status (1);
       begin
+         SPARKTLS.Drop (S);
          GNAT.Sockets.Close_Socket (Sock);
       exception
          when others => null;

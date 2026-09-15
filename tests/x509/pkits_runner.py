@@ -81,7 +81,9 @@ def main():
             else:
                 failed += 1; failures.append(key)
                 if key not in expected_fail: unexpected.append(key)
-    print(f"=== PKITS: {passed}/{passed+failed} passed, {failed} failed ===")
+    #  "failed" is what the baseline does not cover; "known" is what it does.
+    print(f"=== PKITS: {passed}/{passed+failed} passed, {len(unexpected)} failed, "
+          f"{failed - len(unexpected)} known ===")
     for f in failures:
         tag = "  (expected)" if f in expected_fail else ""
         print(f"  FAIL: {f}{tag}")

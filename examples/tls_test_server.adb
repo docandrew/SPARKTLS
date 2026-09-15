@@ -94,6 +94,11 @@ begin
       Level  => GNAT.Sockets.Socket_Level,
       Option => (Name    => GNAT.Sockets.Receive_Timeout,
                  Timeout => 30.0));
+   GNAT.Sockets.Set_Socket_Option
+     (Socket => Client_Sock,
+      Level  => GNAT.Sockets.Socket_Level,
+      Option => (Name    => GNAT.Sockets.Send_Timeout,
+                 Timeout => 10.0));
 
    Channel := GNAT.Sockets.Stream (Client_Sock);
    Put_Line ("Client connected from " &
@@ -130,7 +135,10 @@ begin
                SE   : Stream_Element_Array (1 .. 16384);
                Last : Stream_Element_Offset;
             begin
-               Ada.Streams.Read (Channel.all, SE, Last);
+               --  Receive_Socket returns what has arrived; the stream Read
+               --  blocks until the whole array fills, so a normal
+               --  ClientHello never completed a handshake here.
+               GNAT.Sockets.Receive_Socket (Client_Sock, SE, Last);
                if Last >= SE'First then
                   for I in SE'First .. Last loop
                      Net_Buf (N32 (I - 1)) := Byte (SE (I));
@@ -186,7 +194,10 @@ begin
                SE   : Stream_Element_Array (1 .. 16384);
                Last : Stream_Element_Offset;
             begin
-               Ada.Streams.Read (Channel.all, SE, Last);
+               --  Receive_Socket returns what has arrived; the stream Read
+               --  blocks until the whole array fills, so a normal
+               --  ClientHello never completed a handshake here.
+               GNAT.Sockets.Receive_Socket (Client_Sock, SE, Last);
                if Last >= SE'First then
                   for I in SE'First .. Last loop
                      Net_Buf (N32 (I - 1)) := Byte (SE (I));

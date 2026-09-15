@@ -115,6 +115,12 @@ done
 # NOTE: a "reject" entry passing tells us we refused, not that we refused
 # for the right reason. Asserting the specific alert/Error_Code is a
 # follow-up -- see the note on error-code granularity in the tracker.
+#
+# An optional fourth field "crl" makes the runner fetch the leaf's CRL from
+# its CRL Distribution Point and attach it with --crl. The library never
+# fetches revocation data itself, so without this the revoked.badssl.com
+# leaf is accepted under Soft_Fail (no evidence), exactly as curl accepts
+# it. With the CRL attached the client must refuse with certificate_revoked.
 # ---------------------------------------------------------------------------
 BADSSL=(
     "badssl.com|connect|apex, valid cert, TLS 1.2 only"
@@ -131,7 +137,7 @@ BADSSL=(
     "untrusted-root.badssl.com|reject|root not in the bundle"
     "incomplete-chain.badssl.com|reject|intermediate not served"
     "sha1-intermediate.badssl.com|reject|SHA-1 in the chain"
-    "revoked.badssl.com|reject|revoked cert"
+    "revoked.badssl.com|reject|revoked cert, CRL fetched from the leaf CRL DP|crl"
     "null.badssl.com|reject|null cipher"
     "rc4.badssl.com|reject|RC4"
     "3des.badssl.com|reject|3DES"
@@ -152,9 +158,27 @@ else
         host="${entry%%|*}"
         rest="${entry#*|}"
         expect="${rest%%|*}"
-        why="${rest#*|}"
+        rest="${rest#*|}"
+        why="${rest%%|*}"
+        flag=""
+        [ "$rest" != "$why" ] && flag="${rest#*|}"
 
-        output=$(timeout 15 "$FETCH" --cafile "$CA_BUNDLE" -v -I "https://$host/" 2>&1)
+        extra=()
+        if [ "$flag" = "crl" ]; then
+            crl_file="$(mktemp)"
+            crl_uri=$(echo | timeout 15 openssl s_client -connect "${host%%:*}:443" \
+                          -servername "${host%%:*}" 2>/dev/null \
+                      | openssl x509 -noout -ext crlDistributionPoints 2>/dev/null \
+                      | sed -n 's/^ *URI:\(http[^ ]*\).*/\1/p' | head -1)
+            if [ -n "$crl_uri" ] && curl -sSf --max-time 15 -o "$crl_file" "$crl_uri" 2>/dev/null; then
+                extra=(--crl "$crl_file")
+            else
+                echo "  NOTE: $host: could not fetch CRL (${crl_uri:-no CRL DP}); running without it"
+            fi
+        fi
+
+        output=$(timeout 15 "$FETCH" --cafile "$CA_BUNDLE" -v -I "${extra[@]}" "https://$host/" 2>&1)
+        [ -n "${crl_file:-}" ] && rm -f "$crl_file" && crl_file=""
         if echo "$output" | grep -qE "TLS 1\.[23] handshake complete"; then
             got="connect"
         else

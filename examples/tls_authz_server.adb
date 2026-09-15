@@ -137,9 +137,19 @@ procedure TLS_Authz_Server is
             end if;
          end loop;
       end if;
-      Put_Line ("AUTHZ " & (if Granted then "accept" else "deny")
-                & " subject CN='" & CN & "' intermediates="
-                & Int_Count'Image);
+      --  CN is peer-controlled: keep control characters out of the log.
+      declare
+         Shown : String := CN;
+      begin
+         for I in Shown'Range loop
+            if Character'Pos (Shown (I)) < 32 or else Character'Pos (Shown (I)) > 126 then
+               Shown (I) := '?';
+            end if;
+         end loop;
+         Put_Line ("AUTHZ " & (if Granted then "accept" else "deny")
+                   & " subject CN='" & Shown & "' intermediates="
+                   & Int_Count'Image);
+      end;
       return Granted;
    end Authorize_Client;
 
@@ -199,6 +209,9 @@ procedure TLS_Authz_Server is
       Set_Socket_Option
         (Client_Sock, Socket_Level,
          (Name => Receive_Timeout, Timeout => 10.0));
+      Set_Socket_Option
+        (Client_Sock, Socket_Level,
+         (Name => Send_Timeout, Timeout => 10.0));
       Set_Socket_Option
         (Client_Sock, IP_Protocol_For_TCP_Level,
          (Name => No_Delay, Enabled => True));
@@ -285,10 +298,16 @@ procedure TLS_Authz_Server is
          end case;
       end loop;
 
+      --  Whatever ended the connection, give the handshake slot back
+      --  (see SPARKTLS.Drop): a peer that disconnects after our
+      --  ServerHello otherwise pins it for the life of the process.
+      SPARKTLS.Drop (S);
+
    exception
       when Socket_Error =>
-         null;
+         SPARKTLS.Drop (S);
       when E : others =>
+         SPARKTLS.Drop (S);
          Put_Line ("  Connection error: " &
                    Ada.Exceptions.Exception_Message (E));
    end Handle_Connection;

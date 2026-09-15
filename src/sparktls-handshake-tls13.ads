@@ -26,8 +26,13 @@ is
    Max_Cert_Msg     : constant := SPARKTLS.Handshake.Certs.Max_Cert_Msg;
 
    --  Build a Certificate message with leaf + intermediates from an Identity.
+   --  With Staple, the leaf entry carries the identity's OCSP response as a
+   --  status_request extension (RFC 8446 4.4.2.1, RFC 6066 8): the server
+   --  passes the client's status_request offer, the client always False.
+   --  Len = 0 when the message would not fit Result or the build arena.
    procedure Build_Certificate_Chain
      (Id            : in Identity;
+      Staple        : in Boolean;
       Arena_Storage : in out Arena_Bytes;
       Result        : out Byte_Seq;
       Len           : out N32)

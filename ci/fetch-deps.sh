@@ -24,18 +24,20 @@ PARENT="$(dirname "$ROOT")"
 
 # Commit-pinned for reproducibility. Bump deliberately, not by tracking a
 # branch — a moving dependency makes CI failures impossible to bisect.
+# Pins as of 2026-09-15. Override with the environment variable to test
+# against a different revision (e.g. SPARKTLSCRYPTO_REF=master).
 SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
-SPARKX509_REF="${SPARKX509_REF:-master}"
+SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-master}"
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-4610f08961d5424d7f5d906b259733ccd3712066}"   # master 2026-09-14, PR #7
 
 
 # Needed by examples/ (pinned ../../sparkentropy). Without it the examples
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
 # integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
 SPARKENTROPY_URL="https://github.com/docandrew/sparkentropy.git"
-SPARKENTROPY_REF="${SPARKENTROPY_REF:-main}"
+SPARKENTROPY_REF="${SPARKENTROPY_REF:-6ada71babb67d85fd59c809b1800f0624bd07c8b}"   # main 2026-09-09, GNAT 16
 
 clone_at() {
     local url="$1" ref="$2" dir="$3"

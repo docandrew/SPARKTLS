@@ -488,4 +488,22 @@ is
                  => Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER)),
      Post => Len <= N32 (Result'Length);
 
+   --  RFC 6066 8: CertificateStatus, sent by the server right after
+   --  Certificate when the client asked (status_request) and ServerHello
+   --  echoed it (HC.T12.Server_Will_Staple):
+   --    type[1]=0x16 || length[3] || status_type[1]=ocsp(1) ||
+   --    response_length[3] || OCSPResponse[N]
+   --  Len = 0 when the identity carries no staple.
+   Max_Certificate_Status_12 : constant := 8 + Max_OCSP_Response;
+   procedure Build_Certificate_Status_12
+     (Id : in Identity; Result : out Byte_Seq; Len : out N32)
+   with
+     Pre  =>
+       Result'First = 0
+       and then Result'Last >= Max_Certificate_Status_12 - 1
+       and then Result'Last < N32'Last,
+     Post =>
+       Len <= Max_Certificate_Status_12
+       and then (if Id.OCSP_Staple_Len > 0 then Len = 8 + Id.OCSP_Staple_Len else Len = 0);
+
 end SPARKTLS.Handshake.TLS12;

@@ -171,7 +171,7 @@ procedure TLS_Revocation_Check is
    Roots_OK : Boolean;
    S        : SPARKTLS.Client_Session;
    Res      : SPARKTLS.Action;
-   Net_Buf  : Byte_Seq (0 .. 16383);
+   Net_Buf  : Byte_Seq (0 .. 16644);   --  5-byte header + 2^14 + 256 (RFC 8446 5.2)
    N        : N32;
    Sock     : GNAT.Sockets.Socket_Type;
    Channel  : GNAT.Sockets.Stream_Access;
@@ -200,6 +200,7 @@ procedure TLS_Revocation_Check is
    procedure Rejected (Why : String) is
    begin
       Put_Line ("REJECTED: " & Why);
+      SPARKTLS.Drop (S);
       GNAT.Sockets.Close_Socket (Sock);
       Ada.Command_Line.Set_Exit_Status (1);
    end Rejected;
@@ -415,6 +416,7 @@ begin
                    & " (soft policy tolerates missing or unusable evidence;"
                    & " use --policy hard for assurance)");
    end case;
+   SPARKTLS.Drop (S);
    GNAT.Sockets.Close_Socket (Sock);
 
 exception

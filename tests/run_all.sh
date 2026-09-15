@@ -2,21 +2,32 @@
 # SPARKTLS comprehensive test suite.
 #
 # Usage:
-#   ./tests/run_all.sh              # release build, all suites (incl integration + BoGo),
-#                                   # then chains the --checked pass automatically
-#                                   # (NO_CHAIN=1 to run the release pass alone)
-#   ./tests/run_all.sh integration  # release build, only integration
-#   ./tests/run_all.sh protocol     # release build, only protocol compliance
-#   ./tests/run_all.sh unit         # release build, only unit tests
-#   ./tests/run_all.sh x509         # release build, only x509-limbo tests
-#   ./tests/run_all.sh fuzz         # opt-in: replay fuzz seed corpora through the checked parsers
-#   ./tests/run_all.sh bogo         # BoringSSL adversarial tests
-#                                   # (first run: ~10 min setup)
-#   ./tests/run_all.sh --checked    # debug build with runtime checks + contracts ON
-#                                   # runs unit + protocol + x509 (no integration —
-#                                   # see RFLX 0.26.0 limitation note in source)
-#   ./tests/run_all.sh --checked unit  # combine to filter suites
+#   ./tests/run_all.sh                 # release build, the default lanes
+#                                      # (unit integration protocol x509 bogo),
+#                                      # then chains the --checked pass
+#                                      # (NO_CHAIN=1 to run the release pass alone)
+#   ./tests/run_all.sh unit            # one lane; any of:
+#       unit         unit-test programs + Wycheproof/CAVP vectors (+ realworld
+#                    CA-chain checks when the network is reachable)
+#       cli          sparktls_cli: every subcommand and key algorithm, checked
+#                    against OpenSSL and a real handshake (tests/cli)
+#       integration  SPARKTLS <-> OpenSSL round trips (tests/integration)
+#       protocol     tlsfuzzer scripts (tests/protocol)
+#       x509         x509-limbo + NIST PKITS validators (tests/x509)
+#       bogo         BoringSSL BoGo runner (tests/bogo; first run ~10 min setup)
+#       fuzz         opt-in: replay fuzz seed corpora through checked parsers
+#       tlsanvil     opt-in: TLS-Anvil via docker (~30 min; tests/tlsanvil)
+#   ./tests/run_all.sh --checked       # debug build, runtime checks + contracts
+#                                      # ON, runs unit + protocol + x509
+#   ./tests/run_all.sh --checked unit  # combine to filter lanes
 # Env: CHECKED_BUILD=1 has the same effect as --checked.
+#
+# Every lane ends with one summary line of the form
+#   === <lane>: <passed>[/<total>] passed, <failed> failed[, <known> known][, <skipped> skipped] ===
+# and a results table closes the run. "failed" is always the count that
+# is NOT already in the lane's expected-failures baseline; "known" is
+# what the baseline covers. A lane fails the run only on a regression.
+# The last table is also written to tests/_results/last_run.txt.
 #
 # Mirrors SPARKNaCl's tests/Makefile pattern: a release-mode "fast"
 # build for normal testing and a debug-mode "slow" build with checks
@@ -69,7 +80,7 @@ if [ "$CHECKED_BUILD" = "1" ]; then
     # stestall covers. Integration is release-only (see comment above).
     SUITES="${SUITES_ARG[*]:-unit protocol x509}"
 else
-    SUITES="${SUITES_ARG[*]:-unit integration protocol x509 bogo}"
+    SUITES="${SUITES_ARG[*]:-unit cli integration protocol x509 bogo}"
 fi
 OVERALL_PASS=0
 OVERALL_FAIL=0
@@ -120,6 +131,11 @@ if [ "$CHECKED_BUILD" = "1" ]; then
 fi
 build_or_die "Examples"
 cd "$REPO_ROOT"
+#  The CLI is its own crate; CI ran the library and examples only until
+#  2026-09-14 and never built or exercised it.
+if [ -f cli/alire.toml ]; then
+    build_or_die "CLI" cli
+fi
 
 # Build x509 validator if .gpr exists
 if [ -f tests/x509/x509_validate.gpr ]; then
@@ -147,428 +163,205 @@ fi
 section "Generating test certificates"
 bash tests/certs/generate.sh
 
-# --- Run requested test suites ---
+# ---------------------------------------------------------------------
+# Results ledger. Every lane records one row; the table at the end and
+# the exit status come from here and nowhere else.
+# ---------------------------------------------------------------------
+RESULT_ROWS=()
+record() {   # lane passed failed known skipped status
+    RESULT_ROWS+=("$1|$2|$3|$4|$5|$6")
+}
+
+#  Pull "<p>[/t] passed, <f> failed[, <k> known][, <s> skipped]" out of a
+#  lane's own "=== Name: ... ===" summary line. Prints "p f k s".
+summary_numbers() {   # $1 = lane label regex, stdin = lane output
+    local line p f k s
+    line=$(grep -E "^=== $1" | tail -1)
+    p=$(grep -oE '[0-9]+(/ ?[0-9]+)? passed' <<<"$line" | grep -oE '^[0-9]+'); p=${p:-0}
+    f=$(grep -oE '[0-9]+ failed' <<<"$line" | grep -oE '^[0-9]+'); f=${f:-0}
+    k=$(grep -oE '[0-9]+ known' <<<"$line" | grep -oE '^[0-9]+'); k=${k:-0}
+    s=$(grep -oE '[0-9]+ (skipped|disabled)' <<<"$line" | grep -oE '^[0-9]+'); s=${s:-0}
+    echo "$p $f $k $s"
+}
+
+#  Run a lane script, echo its output as it goes, record its row from its
+#  summary line and exit status.
+run_lane() {   # lane label-regex command...
+    local lane=$1 label=$2; shift 2
+    local out rc p f k s status
+    out=$("$@" 2>&1); rc=$?
+    printf '%s\n' "$out"
+    read -r p f k s <<<"$(printf '%s\n' "$out" | summary_numbers "$label")"
+    if [ $rc -eq 0 ]; then status=PASS; else status=FAIL; fi
+    #  A lane that produced no summary line at all did not run to the end.
+    if ! printf '%s\n' "$out" | grep -qE "^=== $label"; then status=FAIL; fi
+    record "$lane" "$p" "$f" "$k" "$s" "$status"
+}
+
+# ---------------------------------------------------------------------
+# Unit lane: every test program the unit project builds, plus the
+# vector suites. The program list comes from the project file so a test
+# that is built but never run cannot happen again (12 programs, ~230
+# checks, were in that state until 2026-09-14). Output shapes are
+# normalised by tests/support/count_results.py.
+# ---------------------------------------------------------------------
+UNIT_PASS=0; UNIT_FAIL=0; UNIT_SKIP=0
+run_unit() {   # label command...
+    local label=$1; shift
+    local out rc p f s
+    if [ ! -x "$1" ]; then
+        printf '  %-30s %s\n' "$label" "FAIL: not built ($1)"
+        UNIT_FAIL=$((UNIT_FAIL + 1)); return
+    fi
+    out=$("$@" 2>&1); rc=$?
+    read -r p f s <<<"$(printf '%s\n' "$out" | python3 tests/support/count_results.py --rc $rc)"
+    printf '  %-30s %5d passed %3d failed' "$label" "$p" "$f"
+    [ "$s" -gt 0 ] && printf ' %3d skipped' "$s"
+    echo
+    if [ "$f" -gt 0 ]; then
+        printf '%s\n' "$out" | grep -E 'FAIL|Error|exception' | head -5 | sed 's/^/      /'
+    fi
+    UNIT_PASS=$((UNIT_PASS + p)); UNIT_FAIL=$((UNIT_FAIL + f)); UNIT_SKIP=$((UNIT_SKIP + s))
+}
 
 if echo "$SUITES" | grep -q "unit"; then
     section "Unit Tests"
-    UNIT_PASS=0
-    UNIT_FAIL=0
-
-    # PRF-12 test
-    if [ -f bin/examples/test_prf12 ]; then
-        output=$(bin/examples/test_prf12 2>&1 || true)
-        pass=$(echo "$output" | grep -c "PASS" || true)
-        fail=$(echo "$output" | grep -c "FAIL" || true)
-        echo "  test_prf12: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
+    #  Fixture prerequisites (best effort; the tests skip or fail loudly).
+    command -v curl >/dev/null && bash tests/cavp/fetch_sha.sh >/dev/null 2>&1 || true
+    if [ -x ../sparkx509/tests/revocation/gen.sh ]; then
+        bash ../sparkx509/tests/revocation/gen.sh >/dev/null 2>&1 ||
+            echo "  WARN: revocation fixture regeneration failed; test_revocation may use stale fixtures"
     fi
 
-    # Crypto unit tests (sign/verify round-trips)
-    if [ -f bin/tests/test_crypto ]; then
-        output=$(bin/tests/test_crypto 2>&1 || true)
-        pass=$(echo "$output" | grep -c "PASS" || true)
-        fail=$(echo "$output" | grep -c "FAIL" || true)
-        echo "  test_crypto: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # TLS 1.2 ServerHello builder: server_name ack iff Ack_Server_Name (task 146)
-    if [ -f bin/tests/test_build_server_hello_12 ]; then
-        output=$(bin/tests/test_build_server_hello_12 2>&1 || true)
-        pass=$(echo "$output" | grep -c "PASS" || true)
-        fail=$(echo "$output" | grep -c "FAIL" || true)
-        echo "  test_build_server_hello_12: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # SHA-1 (OCSP identifier hash only): NIST CAVP SHAVS byte vectors,
-    # one-shot + streamed + Monte Carlo. Vectors are fetched on demand.
-    if [ -f bin/tests/test_sha1_cavp ]; then
-        if command -v curl >/dev/null; then
-            bash tests/cavp/fetch_sha.sh >/dev/null 2>&1 || true
-        fi
-        output=$(bin/tests/test_sha1_cavp 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^PASS:" || true)
-        fail=$(echo "$output" | grep -c "^FAIL:" || true)
-        skip=$(echo "$output" | grep -c "^SKIP:" || true)
-        echo "  test_sha1_cavp: $pass passed, $fail failed, $skip skipped"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Revocation verifier (stapled OCSP + CRL) against OpenSSL fixtures
-    # generated by the sibling sparkx509 crate's gen.sh.
-    if [ -f bin/tests/test_revocation ]; then
-        if [ -x ../sparkx509/tests/revocation/gen.sh ]; then
-            if ! bash ../sparkx509/tests/revocation/gen.sh >/dev/null 2>&1; then
-                echo "  WARN: revocation fixture regeneration failed (sparkx509/tests/revocation/gen.sh);"
-                echo "        test_revocation will run against stale or missing fixtures"
-            fi
-        fi
-        output=$(bin/tests/test_revocation 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^PASS:" || true)
-        fail=$(echo "$output" | grep -c "^FAIL:" || true)
-        skip=$(echo "$output" | grep -c "^SKIP:" || true)
-        echo "  test_revocation: $pass passed, $fail failed, $skip skipped"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # RSA PKCS#1 v1.5 KAT (verifies the new EMSA-PKCS1-v1_5 path)
-    if [ -f bin/tests/test_rsa_pkcs1_kat ]; then
-        output=$(bin/tests/test_rsa_pkcs1_kat 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_rsa_pkcs1_kat: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # RSA-PSS signing KAT: catches non-canonical private exponent padding.
-    if [ -f bin/tests/test_rsa_pss_sign_kat ]; then
-        output=$(bin/tests/test_rsa_pss_sign_kat 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_rsa_pss_sign_kat: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # RSA CRT signing: CRT path == plain path, verify-after-sign fallback
-    # on corrupted parameters (RSA-2048 and RSA-4096 keys); the 2056-bit
-    # key covers a modulus that is not a whole number of limbs (plain path).
-    if [ -f bin/tests/test_rsa_crt ]; then
-        for kp in "tests/certs/rsa.crt tests/certs/rsa.key" \
-                  "tests/certs/rsa2056.crt tests/certs/rsa2056.key" \
-                  "tests/protocol/tlsfuzzer/tests/rsa4096.crt tests/protocol/tlsfuzzer/tests/rsa4096.key"; do
-            set -- $kp
-            if [ -f "$1" ] && [ -f "$2" ]; then
-                output=$(bin/tests/test_rsa_crt "$1" "$2" 2>&1 || true)
-                pass=$(echo "$output" | grep -c "^  PASS:" || true)
-                fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-                echo "  test_rsa_crt ($(basename $2)): $pass passed, $fail failed"
-                UNIT_PASS=$((UNIT_PASS + pass))
-                UNIT_FAIL=$((UNIT_FAIL + fail))
-            fi
-        done
-    fi
-
-    # Project Wycheproof: adversarial test vectors for crypto primitives.
-    # The runner performs a sparse clone on first run when git is available.
-    if [ -d tests/wycheproof/wycheproof/testvectors_v1 ] ||
-       command -v git >/dev/null; then
-        output=$(bash tests/wycheproof/run.sh 2>&1 || true)
-        wp_total=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
-        wp_count=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
-        wp_count=${wp_count:-0}
-        wp_total=${wp_total:-0}
-        echo "  wycheproof: $wp_total tests, $wp_count failed"
-        UNIT_PASS=$((UNIT_PASS + wp_total))
-        UNIT_FAIL=$((UNIT_FAIL + wp_count))
-    else
-        echo "  wycheproof: skipped (git unavailable)"
-    fi
-
-    # NIST CAVP: ECDSA SigVer (FIPS 186-4) for P-256 + P-384.
-    # Skipped if SigVer.rsp hasn't been downloaded.
-    if [ -f tests/cavp/ecdsa_SigVer.rsp ] || command -v curl >/dev/null; then
-        output=$(bash tests/cavp/run.sh 2>&1 || true)
-        cv_pass=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
-        cv_fail=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
-        cv_pass=${cv_pass:-0}; cv_fail=${cv_fail:-0}
-        echo "  cavp: $cv_pass tests, $cv_fail failed"
-        UNIT_PASS=$((UNIT_PASS + cv_pass))
-        UNIT_FAIL=$((UNIT_FAIL + cv_fail))
-    fi
-
-    # Real-world CA chain test: handshake against major HTTPS sites
-    # using the OS Mozilla CA bundle. Skipped automatically when no
-    # network or no CA bundle.
-    #  Live external-site handshakes: useful locally, but non-deterministic
-    #  (network egress, remote cert churn, the badssl negative-test hosts), so
-    #  never gate CI on them. GitHub Actions sets CI=true; skip there.
-    if [ -z "${CI:-}" ] && [ -f /etc/ssl/certs/ca-certificates.crt ] && getent hosts www.google.com >/dev/null 2>&1; then
-        output=$(bash tests/realworld/run.sh 2>&1 || true)
-        rw_pass=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
-        rw_fail=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
-        rw_pass=${rw_pass:-0}; rw_fail=${rw_fail:-0}
-        echo "  realworld: $rw_pass sites, $rw_fail failed"
-        UNIT_PASS=$((UNIT_PASS + rw_pass))
-        UNIT_FAIL=$((UNIT_FAIL + rw_fail))
-    fi
-
-    # Fiat P-256 vs C-reference KAT (catches arithmetic regressions)
-    if [ -f bin/tests/test_fiat_p256_kat ]; then
-        output=$(bin/tests/test_fiat_p256_kat 2>&1 || true)
-        pass=$(echo "$output" | awk '/Total checks/ {print $3}')
-        fail=$(echo "$output" | awk '/Total checks/ {print $5}')
-        echo "  test_fiat_p256_kat: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Fiat 25519 vs C-reference KAT
-    if [ -f bin/tests/test_fiat_25519_kat ]; then
-        output=$(bin/tests/test_fiat_25519_kat 2>&1 || true)
-        pass=$(echo "$output" | awk '/Total checks/ {print $3}')
-        fail=$(echo "$output" | awk '/Total checks/ {print $5}')
-        echo "  test_fiat_25519_kat: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # X25519 / Ed25519 RFC 7748 / 8032 standards vectors
-    if [ -f bin/tests/test_25519_rfc ]; then
-        output=$(bin/tests/test_25519_rfc 2>&1 || true)
-        pass=$(echo "$output" | awk '/Total checks/ {print $3}')
-        fail=$(echo "$output" | awk '/Total checks/ {print $5}')
-        echo "  test_25519_rfc: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Build_Server_Hello regression suite (pinned before the refactor)
-    if [ -f bin/tests/test_build_server_hello ]; then
-        output=$(bin/tests/test_build_server_hello 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_build_server_hello: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Parse_Client_Hello regression suite (pinned before the refactor)
-    if [ -f bin/tests/test_parse_client_hello ]; then
-        output=$(bin/tests/test_parse_client_hello 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_parse_client_hello: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # TLS 1.2 session ticket round-trip (RFC 5077)
-    if [ -f bin/tests/test_tickets ]; then
-        output=$(bin/tests/test_tickets 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_tickets: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Certificate signature hash/curve combinations (SHA-256 under P-384)
-    if [ -f bin/tests/test_cert_sig_algos ]; then
-        output=$(bin/tests/test_cert_sig_algos 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_cert_sig_algos: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Peer alert description -> Error_Code mapping
-    if [ -f bin/tests/test_error_from_alert ]; then
-        output=$(bin/tests/test_error_from_alert 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_error_from_alert: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # TLS 1.3 PSK resumption wiring (mirror existing pattern)
-    if [ -f bin/tests/test_psk_resume ]; then
-        output=$(bin/tests/test_psk_resume 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_psk_resume: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # KeyUpdate leaky-bucket rate limiting + nonce-space backstop
-    if [ -f bin/tests/test_key_update_ratelimit ]; then
-        output=$(bin/tests/test_key_update_ratelimit 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_key_update_ratelimit: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # Validation configuration fail-closed checks
-    if [ -f bin/tests/test_validation_config ]; then
-        output=$(bin/tests/test_validation_config 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_validation_config: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # TLS 1.2 ECDSA signature-scheme compatibility
-    if [ -f bin/tests/test_tls12_ecdsa ]; then
-        output=$(bin/tests/test_tls12_ecdsa 2>&1 || true)
-        pass=$(echo "$output" | grep -c "^  PASS:" || true)
-        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
-        echo "  test_tls12_ecdsa: $pass passed, $fail failed"
-        UNIT_PASS=$((UNIT_PASS + pass))
-        UNIT_FAIL=$((UNIT_FAIL + fail))
-    fi
-
-    # AES-NI hardware path: FIPS 197 KAT + 1024 random equivalence cases
-    # vs SPARKNaCl software AES (skipped on non-AES-NI CPUs)
-    if [ -f bin/tests/test_aes_ni ]; then
-        output=$(bin/tests/test_aes_ni 2>&1 || true)
-        if echo "$output" | grep -q "^SKIP:"; then
-            echo "  test_aes_ni: SKIP (no AES-NI on this CPU)"
-        else
-            pass=$(echo "$output" | grep -c "^FAIL:" >/dev/null && echo 0 \
-                   || echo "$output" | awk '/^Pass:/ {print $2}')
-            fail=$(echo "$output" | grep -c "^FAIL:" || true)
-            echo "  test_aes_ni: $pass passed, $fail failed"
-            UNIT_PASS=$((UNIT_PASS + pass))
-            UNIT_FAIL=$((UNIT_FAIL + fail))
-        fi
-    fi
-
-    # GHASH-NI (PCLMULQDQ) hardware path: NIST KAT + 1024 random
-    # equivalence cases vs the bit-by-bit GF(2^128) reference
-    if [ -f bin/tests/test_ghash_ni ]; then
-        output=$(bin/tests/test_ghash_ni 2>&1 || true)
-        if echo "$output" | grep -q "^SKIP:"; then
-            echo "  test_ghash_ni: SKIP (no PCLMULQDQ on this CPU)"
-        else
-            pass=$(echo "$output" | grep -c "^FAIL:" >/dev/null && echo 0 \
-                   || echo "$output" | awk '/^Pass:/ {print $2}')
-            fail=$(echo "$output" | grep -c "^FAIL:" || true)
-            echo "  test_ghash_ni: $pass passed, $fail failed"
-            UNIT_PASS=$((UNIT_PASS + pass))
-            UNIT_FAIL=$((UNIT_FAIL + fail))
-        fi
-    fi
-
-    # ECDSA/ECDHE tests (if built)
-    for test_bin in bin/tests/ecdsa_p256_test bin/tests/ecdhe_p384_test; do
-        if [ -f "$test_bin" ]; then
-            name=$(basename "$test_bin")
-            output=$("$test_bin" 2>&1 || true)
-            pass=$(echo "$output" | grep -c "PASS" || true)
-            fail=$(echo "$output" | grep -c "FAIL" || true)
-            echo "  $name: $pass passed, $fail failed"
-            UNIT_PASS=$((UNIT_PASS + pass))
-            UNIT_FAIL=$((UNIT_FAIL + fail))
-        fi
+    run_unit test_prf12 bin/examples/test_prf12
+    mapfile -t UNIT_MAINS < <(grep -oE '"test_[a-z0-9_]+\.adb"' tests/unit/unit_tests.gpr | tr -d '"' | sed 's/\.adb$//')
+    for t in "${UNIT_MAINS[@]}"; do
+        case "$t" in
+            test_ocsp_staple)
+                run_unit "$t" bin/tests/$t tests/certs/p256.crt tests/certs/p256.key ;;
+            test_rsa_crt)
+                for kp in "tests/certs/rsa.crt tests/certs/rsa.key" \
+                          "tests/certs/rsa2056.crt tests/certs/rsa2056.key" \
+                          "tests/protocol/tlsfuzzer/tests/rsa4096.crt tests/protocol/tlsfuzzer/tests/rsa4096.key"; do
+                    set -- $kp
+                    [ -f "$1" ] && [ -f "$2" ] && run_unit "$t ($(basename "$2"))" bin/tests/$t "$1" "$2"
+                done ;;
+            *) run_unit "$t" bin/tests/$t ;;
+        esac
     done
-
+    for t in ecdsa_p256_test ecdhe_p384_test; do
+        [ -x bin/tests/$t ] && run_unit "$t" bin/tests/$t
+    done
+    #  Binaries in bin/tests that no project builds any more are stale and
+    #  say nothing about the current source.
+    for b in bin/tests/test_*; do
+        n=$(basename "$b")
+        printf '%s\n' "${UNIT_MAINS[@]}" | grep -qx "$n" ||
+            echo "  WARN: stale binary $b (not in tests/unit/unit_tests.gpr)"
+    done
     echo ""
-    echo "=== Unit: $UNIT_PASS passed, $UNIT_FAIL failed ==="
-    OVERALL_PASS=$((OVERALL_PASS + UNIT_PASS))
-    OVERALL_FAIL=$((OVERALL_FAIL + UNIT_FAIL))
+    echo "=== Unit: $UNIT_PASS passed, $UNIT_FAIL failed, $UNIT_SKIP skipped ==="
+    record unit "$UNIT_PASS" "$UNIT_FAIL" 0 "$UNIT_SKIP" "$([ $UNIT_FAIL -eq 0 ] && echo PASS || echo FAIL)"
+
+    section "Test Vectors (Wycheproof, NIST CAVP)"
+    if [ -d tests/wycheproof/wycheproof/testvectors_v1 ] || command -v git >/dev/null; then
+        run_lane wycheproof "Wycheproof" bash tests/wycheproof/run.sh
+    else
+        echo "  wycheproof: skipped (git unavailable)"; record wycheproof 0 0 0 0 SKIP
+    fi
+    if [ -f tests/cavp/ecdsa_SigVer.rsp ] || command -v curl >/dev/null; then
+        run_lane cavp "CAVP" bash tests/cavp/run.sh
+    else
+        echo "  cavp: skipped (curl unavailable)"; record cavp 0 0 0 0 SKIP
+    fi
+
+    if [ -z "${CI:-}" ] && [ -f /etc/ssl/certs/ca-certificates.crt ] && getent hosts www.google.com >/dev/null 2>&1; then
+        section "Real-world CA chains (network)"
+        run_lane realworld "Real-world" bash tests/realworld/run.sh
+    fi
+fi
+
+if echo "$SUITES" | grep -q "cli"; then
+    section "sparktls_cli"
+    run_lane cli "CLI" bash tests/cli/run.sh
 fi
 
 if echo "$SUITES" | grep -q "integration"; then
-    section "Integration Tests"
-    if bash tests/integration/run.sh; then
-        OVERALL_PASS=$((OVERALL_PASS + 1))
-    else
-        OVERALL_FAIL=$((OVERALL_FAIL + 1))
-    fi
+    section "Integration Tests (SPARKTLS <-> OpenSSL)"
+    run_lane integration "Integration" bash tests/integration/run.sh
 fi
 
 if echo "$SUITES" | grep -q "protocol"; then
     section "Protocol Compliance Tests (tlsfuzzer)"
-    bash tests/protocol/run.sh
-    OVERALL_PASS=$((OVERALL_PASS + 1))
+    run_lane protocol "Protocol" bash tests/protocol/run.sh
 fi
 
-# Fuzz regression: not the fuzzer itself (tests/fuzz/run.sh fuzz, hours)
-# but the AFL-free part -- every seed replayed through the checked
-# harnesses (contracts + runtime checks live). A finding here is a proof
-# or spec gap by construction. Opt-in: ./tests/run_all.sh fuzz
 if echo "$SUITES" | grep -q "fuzz"; then
     section "Fuzz regression (checked parsers over the seed corpora)"
-    if [ ! -d tests/fuzz/seeds ]; then
-        python3 tests/fuzz/make_seeds.py || true
-    fi
-    if bash tests/fuzz/run.sh build > /dev/null 2>&1 && bash tests/fuzz/run.sh regress 2>&1 | grep -v Aborted | tail -5; then
-        echo "  fuzz regression: PASS"
-        OVERALL_PASS=$((OVERALL_PASS + 1))
+    [ -d tests/fuzz/seeds ] || python3 tests/fuzz/make_seeds.py || true
+    if bash tests/fuzz/run.sh build > /dev/null 2>&1; then
+        run_lane fuzz "Fuzz" bash tests/fuzz/run.sh regress
     else
-        echo "  fuzz regression: FAIL (see FINDING lines above)"
-        OVERALL_FAIL=$((OVERALL_FAIL + 1))
+        echo "  fuzz: build failed"; record fuzz 0 1 0 0 FAIL
     fi
 fi
 
 if echo "$SUITES" | grep -q "x509"; then
     section "x509-limbo Certificate Validation Tests"
-    bash tests/x509/run.sh
-    echo ""
-    echo "Known expected failures:"
-    echo "  pathbuilding (8):    Max_Pool_Size=8, tests need 9-35 intermediates"
-    echo "  webpki--cn (9):      CN-in-SAN is a CA issuance rule, not a validator rule"
-    echo "  cve (1):             CVE-2024-0567 path-building cycle under triage"
-    echo "  pathlen (1):         Leaf pathLen handling policy under triage"
-    echo "  rfc5280 (1):         CA-as-leaf policy under triage"
-    echo "  public-suffix (1):   Would need Mozilla PSL dependency"
-    echo "  (the 8 crl:: cases run with --crl and are expected to pass)"
-    OVERALL_PASS=$((OVERALL_PASS + 1))
-
-    #  NIST PKITS (revocation + path validation), from the BoringSSL
-    #  checkout the BoGo lane downloads. Diffed against a committed
-    #  expected-failures list like BoGo; only a regression fails.
+    run_lane x509-limbo "x509-limbo" bash tests/x509/run.sh
     PKITS_DIR="tests/bogo/_cache/boringssl/pki/testdata/nist-pkits"
     if [ -f "$PKITS_DIR/pkits_testcases-inl.h" ]; then
         section "NIST PKITS"
-        if python3 tests/x509/pkits_runner.py "$PKITS_DIR" bin/tests/x509_validate \
-             --expected tests/x509/PKITS_EXPECTED_FAILURES.txt | grep -vE "^  FAIL: .*\(expected\)$"; then
-            OVERALL_PASS=$((OVERALL_PASS + 1))
-        else
-            OVERALL_FAIL=$((OVERALL_FAIL + 1))
-        fi
+        run_lane pkits "PKITS" python3 tests/x509/pkits_runner.py "$PKITS_DIR" bin/tests/x509_validate \
+            --expected tests/x509/PKITS_EXPECTED_FAILURES.txt
     else
         echo "  PKITS: skipped (BoGo cache not present; run the bogo lane once)"
+        record pkits 0 0 0 0 SKIP
     fi
 fi
 
-#  BoGo (BoringSSL adversarial tests). Included in the default release
-#  suite because it covers a broad set of adversarial edge cases. The
-#  first run downloads ~150 MB (Go + BoringSSL) and builds the runner;
-#  after first run, cache reuse keeps this much faster. The "bogo"
-#  selector still runs it by itself.
 if echo "$SUITES" | grep -q "bogo"; then
     section "BoGo Adversarial Tests"
-    if bash tests/bogo/run.sh; then
-        OVERALL_PASS=$((OVERALL_PASS + 1))
-    else
-        OVERALL_FAIL=$((OVERALL_FAIL + 1))
-    fi
+    run_lane bogo "BoGo" bash tests/bogo/run.sh
 fi
 
-# --- Summary ---
-echo ""
-echo "================================================================"
-echo "  OVERALL: $OVERALL_PASS suites passed, $OVERALL_FAIL suites failed"
-echo "================================================================"
+if echo "$SUITES" | grep -q "tlsanvil"; then
+    section "TLS-Anvil (docker, ~30 min)"
+    run_lane tlsanvil "TLS-Anvil" bash tests/tlsanvil/run.sh
+fi
 
-# Default full run: chain the --checked pass (unit + protocol + x509 with
-# runtime checks + contracts ON) so one no-arg invocation covers both
-# build modes. Explicit suite selectors and --checked invocations keep
-# single-pass behavior; NO_CHAIN=1 skips the chain.
+# ---------------------------------------------------------------------
+# Results table
+# ---------------------------------------------------------------------
+#  The verdict is computed BEFORE the table is printed: the table goes
+#  through tee, i.e. a subshell, and anything set inside it is lost.
+OVERALL=PASS
+for row in "${RESULT_ROWS[@]}"; do
+    IFS='|' read -r lane p f k s st <<<"$row"
+    [ "$st" = FAIL ] && OVERALL=FAIL
+done
+mkdir -p tests/_results 2>/dev/null
+{
+    echo ""
+    echo "================================================================"
+    echo "  RESULTS  ($(date -u +%Y-%m-%dT%H:%M:%SZ), $([ "$CHECKED_BUILD" = "1" ] && echo checked || echo release) build)"
+    echo "================================================================"
+    printf '  %-13s %7s %7s %7s %8s  %s\n' Lane Passed Failed Known Skipped Status
+    for row in "${RESULT_ROWS[@]}"; do
+        IFS='|' read -r lane p f k s st <<<"$row"
+        printf '  %-13s %7s %7s %7s %8s  %s\n' "$lane" "$p" "$f" "$k" "$s" "$st"
+    done
+    echo ""
+    echo "  OVERALL: $OVERALL"
+    echo "================================================================"
+} | tee tests/_results/last_run.txt
+
 if [ "$CHECKED_BUILD" = "0" ] && [ ${#SUITES_ARG[@]} -eq 0 ] && [ "${NO_CHAIN:-0}" = "0" ]; then
     echo ""
     echo "================================================================"
     echo "  Release pass complete -- chaining --checked pass"
     echo "================================================================"
-    if bash "$0" --checked; then
-        CHECKED_FAIL=0
-    else
-        CHECKED_FAIL=1
-    fi
-    [ $OVERALL_FAIL -eq 0 ] && [ $CHECKED_FAIL -eq 0 ] && exit 0 || exit 1
+    if bash "$0" --checked; then CHECKED_FAIL=0; else CHECKED_FAIL=1; fi
+    [ "$OVERALL" = PASS ] && [ $CHECKED_FAIL -eq 0 ] && exit 0 || exit 1
 fi
-[ $OVERALL_FAIL -eq 0 ] && exit 0 || exit 1
+[ "$OVERALL" = PASS ] && exit 0 || exit 1

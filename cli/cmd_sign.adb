@@ -97,7 +97,7 @@ package body Cmd_Sign is
       declare
          procedure Copy (Src : String; Dst : in out String;
                          Len : out Natural) is
-            L : constant Natural := Natural'Min (Src'Length, Dst'Length);
+            L : constant Natural := CLI_Util.Fit_Len (Src'Length, Dst'Length, "Src");
          begin
             Dst (1 .. L) := Src (Src'First .. Src'First + L - 1);
             Len := L;
@@ -131,7 +131,7 @@ package body Cmd_Sign is
                declare
                   V : constant String := Argument (I);
                   L : constant Natural :=
-                     Natural'Min (V'Length, Org'Length);
+                     CLI_Util.Fit_Len (V'Length, Org'Length, "V");
                begin
                   Org (1 .. L) := V (V'First .. V'First + L - 1);
                   Org_Len := L;
@@ -155,8 +155,7 @@ package body Cmd_Sign is
                               SAN_Count := SAN_Count + 1;
                               declare
                                  Len : constant Natural :=
-                                    Natural'Min (S'Length,
-                                       SANs (SAN_Count).Name'Length);
+                                    CLI_Util.Fit_Len (S'Length, SANs (SAN_Count).Name'Length, "S");
                                  All_Digits : Boolean := True;
                               begin
                                  SANs (SAN_Count).Name (1 .. Len) :=
@@ -257,8 +256,7 @@ package body Cmd_Sign is
                              (CA_PEM.DER (0 .. CA_PEM.DER_Len - 1),
                               CN_Span);
                         L : constant Natural :=
-                           Natural'Min (CN'Length,
-                              Params.Issuer.CN'Length);
+                           CLI_Util.Fit_Len (CN'Length, Params.Issuer.CN'Length, "CN");
                      begin
                         Params.Issuer.CN (1 .. L) :=
                            CN (CN'First .. CN'First + L - 1);
@@ -273,8 +271,7 @@ package body Cmd_Sign is
                              (CA_PEM.DER (0 .. CA_PEM.DER_Len - 1),
                               Org_Span);
                         L : constant Natural :=
-                           Natural'Min (O'Length,
-                              Params.Issuer.Org'Length);
+                           CLI_Util.Fit_Len (O'Length, Params.Issuer.Org'Length, "O");
                      begin
                         Params.Issuer.Org (1 .. L) :=
                            O (O'First .. O'First + L - 1);
@@ -290,6 +287,9 @@ package body Cmd_Sign is
 
                   --  Signing key is the CA key
                   Params.Key := CA_Key;
+                  --  Authority Key Identifier = the CA's key identifier.
+                  Cert_Builder.Set_Issuer_Key_ID
+                    (Params, CA_PEM.DER (0 .. CA_PEM.DER_Len - 1), CA_Cert);
 
                   --  SPKI is from the leaf key
                   Params.SPKI (0 .. Leaf_Key.SPKI_Len - 1) :=
@@ -297,6 +297,7 @@ package body Cmd_Sign is
                   Params.SPKI_Len := Leaf_Key.SPKI_Len;
 
                   Params.Is_CA := False;
+                  Params.Has_EKU_Server_Auth := True;
                   Params.Valid_Days := Days;
                   Params.SANs := SANs;
                   Params.SAN_Count := SAN_Count;

@@ -16,8 +16,17 @@ package POSIX_Thin is
    IPPROTO_TCP    : constant := 6;
 
    --  epoll constants
+   --  signal(2). The raw write(2) servers must ignore SIGPIPE: a peer that
+   --  closes before the response arrives otherwise kills the whole process.
+   SIGPIPE : constant := 13;
+   SIG_IGN : constant System.Address := System'To_Address (1);
+   function C_Signal (Sig : int; Handler : System.Address) return System.Address;
+   pragma Import (C, C_Signal, "signal");
+
    EPOLLIN        : constant := 16#001#;
    EPOLLOUT       : constant := 16#004#;
+   EPOLLERR       : constant := 16#008#;
+   EPOLLHUP       : constant := 16#010#;
    EPOLLET        : constant := 16#80000000#;
    EPOLL_CTL_ADD  : constant := 1;
    EPOLL_CTL_DEL  : constant := 2;

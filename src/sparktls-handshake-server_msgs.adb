@@ -986,6 +986,9 @@ is
          when PSK_Binders_OK =>
             Store_PSK_Binder (Ext_Data, First_BP, First_BL, HC.PSK.Binder);
             HC.PSK.Binder_Len := First_BL;
+            --  Everything from the binders-list length field to the end of
+            --  the extension is what the binder transcript excludes.
+            HC.PSK.Binders_Block_Len := N32 (Ext_Data'Last) + 1 - N32 (Binders_Start);
             OK := True;
 
          when PSK_Binders_Decode_Error =>
@@ -1105,6 +1108,9 @@ is
       --  deferred offer is resolved in Verify_PSK_Binder, which rejects a
       --  real ticket with a bad binder and declines an unresolvable one.
       if HC.PSK.Binder_Len /= 0 and then Ident_Count /= Binder_Count then
+         --  RFC 8446 4.2.11: one binder per identity. BoringSSL (and BoGo
+         --  Resume-Server-ExtraPSKBinder / ExtraIdentityNoBinder) treat a
+         --  count mismatch as illegal_parameter.
          HC.Ext_Parse_Err := Illegal_Parameter;
          HC.PSK.Binder_Len := 0;
          pragma Assert (HC.Legacy_Session_ID_Len = Saved_Legacy);
@@ -1226,6 +1232,26 @@ is
          elsif Val = Wire_Suite_CHACHA20_POLY1305_SHA256 then
             Negotiated := To_Suite (Val);
          end if;
+      end if;
+
+      --  Per-family best offered suite, independent of the configured
+      --  identity: the identity set (Config.Identities) is matched against
+      --  these after the ClientHello is parsed.
+      if Val in
+           Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+           | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+           | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (HC.Best_12_ECDSA), Val)
+      then
+         HC.Best_12_ECDSA := To_Suite (Val);
+      end if;
+      if Val in
+           Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+           | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+           | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (HC.Best_12_RSA), Val)
+      then
+         HC.Best_12_RSA := To_Suite (Val);
       end if;
 
       if Cert_Is_ECDSA
@@ -2040,6 +2066,7 @@ is
             --  is required before we may issue a NewSessionTicket on
             --  this connection (BoGo TLS13-ExpectNoSessionTicketOn
             --  BadKEMode-Server).
+            HC.PSK.Saw_KE_Modes := True;
             if DLen >= 2 then
                declare
                   ED       : RBT.Bytes (1 .. RBT.Index (DLen));
@@ -2147,6 +2174,33 @@ is
                   if not OK then
                      OK := False;
                      return;
+                  end if;
+                  --  Keep the DN entries (outer length stripped) for
+                  --  Must_Match_Issuer identity selection; an oversize list
+                  --  counts as absent.
+                  if DLen - 2 <= Max_Peer_CA_Names then
+                     HC.Peer_CA_Names := (others => 0);
+                     HC.Peer_CA_Names (0 .. DLen - 3) := Ext_Data (2 .. DLen - 1);
+                     HC.Peer_CA_Len := DLen - 2;
+                  else
+                     HC.Peer_CA_Len := 0;
+                  end if;
+               end;
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Status_Request =>
+            --  RFC 6066 8: CertificateStatusRequest = status_type(1) ||
+            --  OCSPStatusRequest { responder_id_list<0..2^16-1>,
+            --  request_extensions<0..2^16-1> }, so at least 5 bytes. Only
+            --  status_type ocsp(1) makes us staple; anything else is
+            --  ignored and the extension is not echoed.
+            if DLen >= 5 and then DLen in Wire_Small_Ext_Len then
+               declare
+                  ED : RBT.Bytes (1 .. RBT.Index (DLen));
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
+                  if ED (1) = 1 then
+                     HC.Client_Wants_Staple := True;
                   end if;
                end;
             end if;
@@ -2701,12 +2755,14 @@ is
          return;
       end if;
 
-      --  RFC 8446 4.2.9: a TLS 1.3 ClientHello with pre_shared_key
-      --  MUST also include psk_key_exchange_modes with at least one
-      --  mode the server recognises. We support only psk_dhe_ke
-      --  (0x01), so require HC.PSK.Has_DHE_KE whenever a PSK binder
-      --  is present. BoGo TLS13-SendNoKEMModesWithPSK-Server.
-      if Version = TLS_1_3 and then HC.PSK.Binder_Len > 0 and then not HC.PSK.Has_DHE_KE then
+      --  RFC 8446 4.2.9: a TLS 1.3 ClientHello with pre_shared_key MUST
+      --  also include psk_key_exchange_modes; without it the server MUST
+      --  abort with missing_extension (BoGo TLS13-SendNoKEMModesWithPSK-
+      --  Server). Present but listing no mode we support (we do only
+      --  psk_dhe_ke) is not an error: the PSK is declined at the resume
+      --  decision and a full handshake follows (BoGo
+      --  TLS13-SendBadKEModeSessionTicket-Server).
+      if Version = TLS_1_3 and then HC.PSK.Binder_Len > 0 and then not HC.PSK.Saw_KE_Modes then
          Last_Err := Missing_Extension;
          OK := False;
 

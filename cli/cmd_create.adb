@@ -1,3 +1,4 @@
+with CLI_Util;
 --  sparktls_cli create cert for <name> using <key> to <file> [options]
 --  sparktls_cli create ca for <name> using <key> to <file> [options]
 
@@ -81,12 +82,9 @@ package body Cmd_Create is
          K : constant String := Argument (6);
          O : constant String := Argument (8);
       begin
-         Name_Len := Natural'Min (N'Length, Name'Length);
-         Name (1 .. Name_Len) := N (N'First .. N'First + Name_Len - 1);
-         Key_Len := Natural'Min (K'Length, Key_Path'Length);
-         Key_Path (1 .. Key_Len) := K (K'First .. K'First + Key_Len - 1);
-         Out_Len := Natural'Min (O'Length, Out_Path'Length);
-         Out_Path (1 .. Out_Len) := O (O'First .. O'First + Out_Len - 1);
+         CLI_Util.Fit (N, Name, Name_Len, "name");
+         CLI_Util.Fit (K, Key_Path, Key_Len, "key path");
+         CLI_Util.Fit (O, Out_Path, Out_Len, "output path");
       end;
 
       --  Parse optional args
@@ -110,8 +108,7 @@ package body Cmd_Create is
                declare
                   V : constant String := Argument (I);
                begin
-                  Org_Len := Natural'Min (V'Length, Org'Length);
-                  Org (1 .. Org_Len) := V (V'First .. V'First + Org_Len - 1);
+                  CLI_Util.Fit (V, Org, Org_Len, "organization");
                end;
             elsif Arg = "with-san" and then I < Argument_Count then
                I := I + 1;
@@ -133,8 +130,7 @@ package body Cmd_Create is
                               SAN_Count := SAN_Count + 1;
                               declare
                                  Len : constant Natural :=
-                                    Natural'Min (S'Length,
-                                       SANs (SAN_Count).Name'Length);
+                                    CLI_Util.Fit_Len (S'Length, SANs (SAN_Count).Name'Length, "S");
                               begin
                                  SANs (SAN_Count).Name (1 .. Len) :=
                                     S (S'First .. S'First + Len - 1);

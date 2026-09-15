@@ -94,4 +94,18 @@ is
       return S.Use_EMS;
    end Extended_Master_Secret_Used;
 
+   function T12_Flags (S : Session) return String is
+   begin
+      return " t12[sent_tkt=" & Boolean'Image (S.HC.T12.Sent_Ticket_Ext)
+        & " will_issue=" & Boolean'Image (S.HC.T12.Server_Will_Issue)
+        & " echo_sid=" & Boolean'Image (S.HC.T12.Server_Echoed_SID)
+        & " resuming=" & Boolean'Image (S.HC.T12.Resuming)
+        & " tkt_valid=" & Boolean'Image (S.HC.Cfg.TLS12_Resume_Ticket.Valid)
+        & " tkt_suite=" & Unsigned_16'Image (S.HC.Cfg.TLS12_Resume_Ticket.Suite)
+        & " neg=" & Unsigned_16'Image (Wire_Of (S.Negotiated_Suite))
+        & " tkt_sni=" & Natural'Image (S.HC.Cfg.TLS12_Resume_Ticket.Server_Name.Len)
+        & " sni=" & Natural'Image (S.HC.Cfg.Server_Name.Len)
+        & " cke=" & Boolean'Image (S.HC.CKE_Received_12) & "]";
+   end T12_Flags;
+
 end SPARKTLS.Test_Support;

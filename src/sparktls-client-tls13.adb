@@ -941,7 +941,8 @@ is
                   else Byte_Seq'(1 .. 0 => 0)),
                  (if Sig_Found
                   then Data (Data'First + 3 + SA_Start .. Data'First + 2 + SA_Start + SA_Cnt)
-                  else Byte_Seq'(1 .. 0 => 0)));
+                  else Byte_Seq'(1 .. 0 => 0)),
+                 Byte_Seq'(1 .. 0 => 0));
          begin
             if Picked_Id = null then
                S.HC.Cfg.Local := No_Identity'Access;
@@ -956,8 +957,10 @@ is
                  Handshake.Pick_Sig_Algo_With_Prefs
                    (Data (Data'First + 3 + SA_Start .. Data'First + 2 + SA_Start + SA_Cnt),
                     S.HC.Cfg.Local.Sign_Algo,
-                    S.HC.Cfg.Sign_Sig_Algos,
-                    S.HC.Cfg.Sign_Sig_Algo_Count);
+                    (if S.HC.Cfg.Local.Sign_Pref_Count > 0
+                     then S.HC.Cfg.Local.Sign_Prefs else S.HC.Cfg.Sign_Sig_Algos),
+                    (if S.HC.Cfg.Local.Sign_Pref_Count > 0
+                     then S.HC.Cfg.Local.Sign_Pref_Count else S.HC.Cfg.Sign_Sig_Algo_Count));
             end if;
          end;
       end if;
@@ -1129,6 +1132,25 @@ is
          end if;
       end if;
 
+      --  Application verdict on the staple (Config.Verify_Staple), whenever
+      --  we asked for one; Present = False when nothing usable arrived.
+      if S.HC.Cfg.Request_OCSP_Staple and then S.HC.Cfg.Verify_Staple /= null then
+         declare
+            Accepted : Boolean;
+         begin
+            if D.Stapled_OCSP_Len > 0 then
+               Accepted :=
+                 S.HC.Cfg.Verify_Staple (D.Stapled_OCSP (0 .. D.Stapled_OCSP_Len - 1), True);
+            else
+               Accepted := S.HC.Cfg.Verify_Staple (D.Stapled_OCSP (1 .. 0), False);
+            end if;
+            if not Accepted then
+               Send_HS_Encrypted_Alert (S, D, Bad_Certificate_Status_Response, Result);
+               return;
+            end if;
+         end;
+      end if;
+
       if S.HC.Cfg.Server_Name.Len > 0
         and then not S.HC.Cfg.Skip_Hostname_Verify
         and then D.Peer_Leaf.Present
@@ -1154,9 +1176,7 @@ is
 
       if not S.HC.Cfg.Skip_Verify and then D.Peer_Leaf.Present then
          if S.HC.Cfg.Trust = null or else S.HC.Cfg.Get_Time = null then
-            S.Last_Error := Bad_Certificate;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+            Send_HS_Encrypted_Alert (S, D, Bad_Certificate, Result);
             return;
          end if;
          pragma Assert (X509.Spans_Valid (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
@@ -1185,9 +1205,7 @@ is
             --  Application veto (Config.Verify_Peer): consulted only after
             --  the core accepted the chain, never when Skip_Verify is set.
             if Verdict.Result /= Valid then
-               S.Last_Error := Bad_Certificate;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
+               Send_HS_Encrypted_Alert (S, D, Bad_Certificate, Result);
                return;
             end if;
             if (S.HC.Cfg.Verify_Peer /= null
@@ -1201,9 +1219,7 @@ is
                               S.HC.Cfg.Server_Name.Data (1 .. S.HC.Cfg.Server_Name.Len),
                               S.HC.Cfg.Verify_Purpose))
             then
-               S.Last_Error := Certificate_Unknown;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
+               Send_HS_Encrypted_Alert (S, D, Certificate_Unknown, Result);
                return;
             end if;
 
@@ -1211,6 +1227,9 @@ is
             --  core and the application hook accepted the chain.
             Check_Revocation_13 (S, D, Cert_X, Result);
             if Result /= OK then
+               --  Check_Revocation_13 only records the verdict; put the
+               --  alert on the wire (RFC 8446 6.2) under the handshake key.
+               Send_HS_Encrypted_Alert (S, D, S.Last_Error, Result);
                return;
             end if;
          end;
@@ -1353,23 +1372,17 @@ is
                                   Cert       => D.Peer_Leaf.Cert,
                                   Sig_Scheme => Sig_Scheme)
                         then
-                           S.Last_Error := Certificate_Verify_Failed;
-                           Set_State (S, Error_State);
-                           Result := Error_Alert;
+                           Send_HS_Encrypted_Alert (S, D, Certificate_Verify_Failed, Result);
                            return;
                         end if;
                      end;
                   else
-                     S.Last_Error := Certificate_Verify_Failed;
-                     Set_State (S, Error_State);
-                     Result := Error_Alert;
+                     Send_HS_Encrypted_Alert (S, D, Certificate_Verify_Failed, Result);
                      return;
                   end if;
                end;
             else
-               S.Last_Error := Certificate_Verify_Failed;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
+               Send_HS_Encrypted_Alert (S, D, Certificate_Verify_Failed, Result);
                return;
             end if;
          end;
@@ -1464,9 +1477,7 @@ is
          end case;
 
          if not Verified then
-            S.Last_Error := Handshake_Failure;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+            Send_HS_Encrypted_Alert (S, D, Handshake_Failure, Result);
             return;
          end if;
       end;
@@ -1650,7 +1661,11 @@ is
          Cert_Len : N32;
       begin
          Handshake.TLS13.Build_Certificate_Chain
-           (Id => S.HC.Cfg.Local.all, Arena_Storage => D.Arena_Storage, Result => Cert_Buf, Len => Cert_Len);
+           (Id            => S.HC.Cfg.Local.all,
+            Staple        => False,
+            Arena_Storage => D.Arena_Storage,
+            Result        => Cert_Buf,
+            Len           => Cert_Len);
          if Cert_Len = 0 or else Cert_Len >= Transcript_Capacity or else Cert_Len > Max_Fragment
          then
             S.Last_Error := Internal_Error;
@@ -2801,6 +2816,9 @@ is
                Across : Boolean := False;
                Dup    : Boolean := False;
                Bad    : Boolean := False;
+               --  RFC 9149 2: the flags bit string is encoded minimally, so
+               --  its last byte is never zero (illegal_parameter otherwise).
+               Nonmin : Boolean := False;
                Seen   : array (1 .. 16) of Unsigned_16 := (others => 0);
                Seen_N : Natural := 0;
             begin
@@ -2853,6 +2871,8 @@ is
                                              begin
                                                 if Inner = 0 or else Inner /= DLen - 1 then
                                                    Bad := True;
+                                                elsif FB (FL) = 0 then
+                                                   Nonmin := True;
                                                 elsif Inner >= 2
                                                   and then (Byte (FB (3)) and 16#01#) /= 0
                                                 then
@@ -2879,7 +2899,7 @@ is
                   end;
                end if;
 
-               if Dup then
+               if Dup or else Nonmin then
                   S.Ticket.Valid := False;
                   Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
                elsif Bad then
@@ -2908,7 +2928,8 @@ is
       Post_HS_Reasm.Reset (S.Post_HS);
    end Reset_Post_HS_Reasm;
 
-   procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action)
+   procedure Dispatch_Post_HS_Message
+     (S : in out Session; Was_Key_Update : out Boolean; Result : out Action)
    with Pre => Post_HS_Reasm.Has_Message (S.Post_HS), Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
    --  RFC 8446 4.6.3. A KeyUpdate from the peer rotates the peer's WRITE
@@ -2988,15 +3009,19 @@ is
       --  per-message. Defer it: a burst of requests collapses to a single
       --  KeyUpdate, which is what the peer expects. Replying inline would
       --  make every reply after the first look unsolicited.
+      --  Deferred to the next write, as on the server side (see
+      --  sparktls-server-tls13.adb Process_Key_Update_Message).
       S.Key_Update_Pending := True;
       Result := OK;
    end Process_Key_Update_Message;
 
-   procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action) is
+   procedure Dispatch_Post_HS_Message
+     (S : in out Session; Was_Key_Update : out Boolean; Result : out Action) is
       Msg_Len : constant N32 := Post_HS_Reasm.Message_Length (S.Post_HS);
       Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
         Byte_Seq (Post_HS_Reasm.Message (S.Post_HS));
    begin
+      Was_Key_Update := Msg (0) = Key_Update.HS_Key_Update;
       if Msg (0) = 16#04# then
          Process_NST_Message (S, Msg, Msg_Len, Result);
       elsif Msg (0) = Key_Update.HS_Key_Update then
@@ -3079,10 +3104,20 @@ is
             end if;
 
             if Has_Message (S.Post_HS) then
-               Dispatch_Post_HS_Message (S, Result);
-               if Result /= OK then
-                  return;
-               end if;
+               declare
+                  Was_KU : Boolean;
+               begin
+                  Dispatch_Post_HS_Message (S, Was_KU, Result);
+                  if Result /= OK then
+                     return;
+                  end if;
+                  --  RFC 8446 5.1: a KeyUpdate must end its record (see the
+                  --  server-side note in sparktls-server-tls13.adb).
+                  if Was_KU and then Pos < Plain_Len then
+                     Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+               end;
             end if;
          end;
       end loop;

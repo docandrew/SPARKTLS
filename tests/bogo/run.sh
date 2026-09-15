@@ -224,7 +224,7 @@ UNSUPPORTED_SKIPS=(
   '*ServerPadding*' '*server-padding*' '*ExportKeyingMaterial*'
   '*ExportTrafficSecrets*'
   # BoringSSL callback / auxiliary APIs not exposed by SPARKTLS.
-  '*TicketCallback*' 'Server-DDoS-*' '*Fail*Callback*'
+  '*TicketCallback*' 'Server-DDoS-*'
   '*EarlyCallback*' '*SRTP*' '*TLSUnique*' 'TLS-HintMismatch-*'
   'Peek-*' 'ShimSendAlert-*'
   # Post-quantum key exchange (X25519MLKEM768 etc.) is not implemented.
@@ -397,6 +397,12 @@ UNSUPPORTED_SKIPS=(
   # protocol decision: we do not implement renegotiation at all.
   'ExtendedMasterSecret-Renego-*'
   'Ed25519DefaultDisable-*'
+  # {Client,Server}-VerifyDefault-Ed25519-TLS13 assert BoringSSL's OWN default
+  # verify-preference table, in which Ed25519 is off unless enabled ("test
+  # whether the shim expects the algorithm enabled by default"). SPARKTLS
+  # accepts Ed25519 peer signatures by default, as browsers do; not a
+  # conformance property.
+  '*-VerifyDefault-Ed25519-TLS13'
   'PostQuantumNotEnabledByDefaultInClients'
   'SendClientVersion-RSA' 'SkipChangeCipherSpec-*'
   'NoCommonSignatureAlgorithms-TLS12-Fallback' 'NoCommonCurves'
@@ -407,6 +413,42 @@ UNSUPPORTED_SKIPS=(
   # BoGo's legacy preference string. The modern ECDHE AEAD cases run.
   'CipherNegotiation-1' 'CipherNegotiation-2' 'CipherNegotiation-3'
   'CipherNegotiation-4' 'CipherNegotiation-7' 'CipherNegotiation-8'
+  # Raw public keys (RFC 7250) and the client_certificate_type /
+  # server_certificate_type negotiation that selects them are not
+  # implemented: SPARKTLS authenticates peers with X.509 chains only.
+  # Every ClientCertificateType-* case negotiates RPK on one side.
+  '*RawPublicKey*' '*RPK*' 'ClientCertificateType-*'
+  # Delegated credentials (RFC 9345) and trust anchor identifiers
+  # (draft-ietf-tls-trust-anchor-ids) are not implemented.
+  '*DelegatedCredential*' '*TrustAnchorIDs*'
+  # TLS 1.2 PSK cipher suite (see the PSK block above).
+  'ClientAuth-PSK'
+  # BoringSSL's certificate-selection callback returning an error, which the
+  # shim must turn into an internal_error alert at credential-selection time
+  # (encrypted, in TLS 1.3). SPARKTLS selects identities from configuration,
+  # not from a callback; there is no equivalent failure point to drive.
+  'FailCertCallback-*'
+  # These resumption probes rewrite the shim's ticket with the key given by
+  # -ticket-key, in BoringSSL's ticket format. SPARKTLS tickets are sealed
+  # in their own format under the Ticket_Keys ring, so the runner cannot
+  # forge the modified ticket ("shim ticket name mismatch").
+  'Resume-Server-DeclineBadCipher*' 'Resume-Server-DeclineCrossVersion*'
+  # TLS 1.2 session-ID (stateful) resumption is not implemented (tickets
+  # only); these expect a resume with tickets disabled.
+  'Resume-Server-NoTickets-*' 'TLS12-NoTicket-NoMint'
+  # The original session is CBC-only, which we never negotiate.
+  'Resume-Server-CipherNotPreferred'
+  # Certificate selection probes whose configurations only offer CBC or
+  # static-RSA cipher suites (never negotiated here), or that negotiate the
+  # RFC 7250 certificate_type extension (not implemented).
+  'CertificateSelection-Server-CipherSuite-*'
+  'CertificateSelection-Server-SignatureAlgorithm-Match*-TLS-TLS12'
+  'CertificateSelection-Server-SignatureAlgorithmECDSACurve-TLS-TLS12'
+  'CertificateSelection-Server-SignatureAlgorithmImpactsECDHEOnly-*'
+  'CertificateSelection-*-CertificateType-*'
+  # 0-RTT (earlyData) probes of the ticket-age window; early data is not
+  # implemented (the plain TLS13-TicketAgeSkew-Forward/Backward cases run).
+  'TLS13-TicketAgeSkew-*-6*'
 )
 
 # Join with ';' for the runner.

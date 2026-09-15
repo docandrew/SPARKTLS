@@ -1,4 +1,5 @@
 with SPARKTLS.Records;
+with SPARKTLS.HS_Pool;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Key_Schedule_12;
@@ -358,6 +359,21 @@ is
       S.Key_Update_Pending := True;
       Flush_Pending_Key_Update (S);
    end Request_Key_Update;
+
+   procedure Drop (S : in out Session) is
+   begin
+      if S.Slot /= No_Slot then
+         --  Same order as the completion path in Server.Advance /
+         --  Client.Advance: zero the handshake context (ephemeral keys,
+         --  transcript, PSK material) before the slot is wiped and freed.
+         Scrub_Handshake_Context (S.HC);
+         SPARKTLS.HS_Pool.Release (S.Slot);
+         S.Slot := No_Slot;
+      end if;
+      Sanitize_Keys (S);
+      Scrub_Ticket_Secrets (S);
+      Set_State (S, Closed);
+   end Drop;
 
    procedure Write_Plaintext (S : in out Session; Plaintext : in Byte_Seq; Bytes_Written : out N32)
    is
@@ -1187,5 +1203,143 @@ is
    begin
       return F = Not_Random'Access;
    end Is_Sentinel_Random;
+
+   ----------------------------------------------------------------------------
+   --  Set_OCSP_Staple
+   ----------------------------------------------------------------------------
+   procedure Set_OCSP_Staple
+     (Id : in out Identity; Response : in Byte_Seq; OK : out Boolean) is
+   begin
+      Id.OCSP_Staple := (others => 0);
+      if Response'Length > Max_OCSP_Response then
+         Id.OCSP_Staple_Len := 0;
+         OK := False;
+         return;
+      end if;
+      declare
+         L : constant N32 := N32 (Response'Length);
+      begin
+         if L > 0 then
+            Id.OCSP_Staple (0 .. L - 1) := Response (Response'First .. Response'First + L - 1);
+         end if;
+         Id.OCSP_Staple_Len := L;
+      end;
+      OK := True;
+   end Set_OCSP_Staple;
+
+   --  DER Name content bounds: SEQUENCE tag (0x30) then a short or a 1- or
+   --  2-byte long-form length; False for anything else.
+   procedure DN_Content
+     (DN : in Byte_Seq; First : out N32; Last : out N32; OK : out Boolean)
+   with
+     Pre  => DN'Length in 1 .. Max_Peer_CA_Names,
+     Post => (if OK then First in DN'Range and then Last in DN'Range and then First <= Last)
+   is
+      Hdr : N32;
+      Len : N32;
+   begin
+      First := DN'First;
+      Last := DN'First;
+      OK := False;
+      if DN'Length < 2 or else DN (DN'First) /= 16#30# then
+         return;
+      end if;
+      if DN (DN'First + 1) < 16#80# then
+         Hdr := 2;
+         Len := N32 (DN (DN'First + 1));
+      elsif DN (DN'First + 1) = 16#81# and then DN'Length >= 3 then
+         Hdr := 3;
+         Len := N32 (DN (DN'First + 2));
+      elsif DN (DN'First + 1) = 16#82# and then DN'Length >= 4 then
+         Hdr := 4;
+         Len := N32 (DN (DN'First + 2)) * 256 + N32 (DN (DN'First + 3));
+      else
+         return;
+      end if;
+      if Len = 0 or else Hdr + Len /= N32 (DN'Length) then
+         return;
+      end if;
+      --  Hdr + Len = DN'Length, so the content runs to the end of DN.
+      First := DN'First + Hdr;
+      Last := DN'Last;
+      OK := True;
+   end DN_Content;
+
+   function Name_Equals
+     (DER : X509.Byte_Seq; Sp : X509.Span; Content : Byte_Seq) return Boolean
+   with Pre => Content'Length <= Max_Peer_CA_Names
+   is
+   begin
+      if not Sp.Present or else Sp.First > Sp.Last or else Sp.Last > DER'Last
+        or else Sp.First < DER'First
+        or else Sp.Last - Sp.First >= X509.N32 (Max_Peer_CA_Names)
+        or else N32 (Sp.Last - Sp.First) + 1 /= N32 (Content'Length)
+      then
+         return False;
+      end if;
+      for I in 0 .. N32 (Content'Length) - 1 loop
+         pragma Loop_Invariant (I < N32 (Content'Length));
+         if X509.Byte (Content (Content'First + I)) /= DER (Sp.First + X509.N32 (I)) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Name_Equals;
+
+   function Identity_Issuer_In (Id : Identity; CA_Names : Byte_Seq) return Boolean is
+      Total : constant N32 := N32 (CA_Names'Length);
+      Pos   : N32 := 0;
+   begin
+      if Total < 2 then
+         return False;
+      end if;
+      --  Tolerate the outer list length (the wire extension body form).
+      if N32 (CA_Names (CA_Names'First)) * 256 + N32 (CA_Names (CA_Names'First + 1)) = Total - 2 then
+         Pos := 2;
+      end if;
+      while Pos + 2 <= Total loop
+         pragma Loop_Invariant (Pos <= Total);
+         pragma Loop_Variant (Increases => Pos);
+         declare
+            DN_Len : constant N32 :=
+              N32 (CA_Names (CA_Names'First + Pos)) * 256 + N32 (CA_Names (CA_Names'First + Pos + 1));
+         begin
+            if DN_Len = 0 or else Pos + 2 + DN_Len > Total then
+               return False;
+            end if;
+            declare
+               DN : constant Byte_Seq :=
+                 CA_Names (CA_Names'First + Pos + 2 .. CA_Names'First + Pos + 1 + DN_Len);
+               CF, CL : N32;
+               C_OK   : Boolean;
+            begin
+               DN_Content (DN, CF, CL, C_OK);
+               if C_OK then
+                  if Id.Cert_Valid
+                    and then Name_Equals (Id.Cert_DER, X509.Issuer_Raw (Id.Cert), DN (CF .. CL))
+                  then
+                     return True;
+                  end if;
+                  for K in 0 .. Id.Int_Count - 1 loop
+                     pragma Loop_Invariant (K < Id.Int_Count);
+                     if Id.Ints (K).Present
+                       and then Name_Equals (Id.Ints (K).DER, X509.Issuer_Raw (Id.Ints (K).Cert), DN (CF .. CL))
+                     then
+                        return True;
+                     end if;
+                  end loop;
+               end if;
+            end;
+            Pos := Pos + 2 + DN_Len;
+         end;
+      end loop;
+      return False;
+   end Identity_Issuer_In;
+
+   function TLS12_Cert_Request_Types (S : Session) return Byte_Seq is
+     (S.HC.T12.Peer_Cert_Types (0 .. S.HC.T12.Peer_Cert_Types_Len - 1));
+
+   function Local_Identity (S : Session) return Maybe_Identity_Access is
+     (Maybe_Identity_Access (S.HC.Cfg.Local));
 
 end SPARKTLS;

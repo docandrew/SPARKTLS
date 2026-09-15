@@ -3,6 +3,21 @@ with Ada.Unchecked_Deallocation;
 
 package CLI_Util is
 
+   --  A command-line value that does not fit its buffer. Raised instead of
+   --  truncating: a truncated output path writes the key somewhere else,
+   --  a truncated name issues a certificate for the wrong subject.
+   Argument_Error : exception;
+
+   --  Copy Src into Dst (from Dst'First) or raise Argument_Error naming What.
+   procedure Fit (Src : String; Dst : out String; Len : out Natural; What : String);
+
+   --  Src_Len if it fits Max, else Argument_Error naming What.
+   function Fit_Len (Src_Len, Max : Natural; What : String) return Natural;
+
+   --  Peer- or file-controlled text for the terminal: control characters
+   --  become '?', so a crafted name cannot drive the terminal.
+   function Printable (S : String) return String;
+
    type Byte_Seq_Access is access X509.Byte_Seq;
 
    procedure Free is new Ada.Unchecked_Deallocation

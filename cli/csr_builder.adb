@@ -4,6 +4,8 @@ with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.Ed25519;
+with SPARKTLSCrypto.RFC6979;
 with SPARKEntropy;
 
 package body CSR_Builder is
@@ -152,7 +154,6 @@ package body CSR_Builder is
                H      : Digest;
                D      : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                K      : Bytes_32;
-               K_X    : X509.Byte_Seq (0 .. 31);
                R_Out, S_Out : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                for I in Data'Range loop
@@ -162,13 +163,13 @@ package body CSR_Builder is
                for I in N32 range 0 .. 31 loop
                   D (I) := Key.Raw (I);
                end loop;
-               Ensure_Entropy;
-               Get_Random (K_X);
-               for I in N32 range 0 .. 31 loop
-                  K (I) := Byte (K_X (X509.N32 (I)));
-               end loop;
-               SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
-                                          R_Out, S_Out, OK);
+               --  RFC 6979 deterministic nonce (see cert_builder).
+               SPARKTLSCrypto.RFC6979.Derive_K_P256
+                 (Bytes_32 (D), Bytes_32 (H), K, OK);
+               if OK then
+                  SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
+                                             R_Out, S_Out, OK);
+               end if;
                if OK then
                   ECDSA_To_DER (Byte_Seq (R_Out), Byte_Seq (S_Out), 32,
                                 Sig_DER, Sig_Len);
@@ -182,7 +183,6 @@ package body CSR_Builder is
                H      : Digest;
                D      : Byte_Seq (0 .. 47);
                K      : Bytes_48;
-               K_X    : X509.Byte_Seq (0 .. 47);
                R_Out, S_Out : Byte_Seq (0 .. 47);
             begin
                for I in Data'Range loop
@@ -192,12 +192,12 @@ package body CSR_Builder is
                for I in N32 range 0 .. 47 loop
                   D (I) := Key.Raw (I);
                end loop;
-               Ensure_Entropy;
-               Get_Random (K_X);
-               for I in N32 range 0 .. 47 loop
-                  K (I) := Byte (K_X (X509.N32 (I)));
-               end loop;
-               SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
+               SPARKTLSCrypto.RFC6979.Derive_K_P384
+                 (Bytes_48 (D), Bytes_48 (H), K, OK);
+               if not OK then
+                  return;
+               end if;
+SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
                                           R_Out, S_Out, OK);
                if OK then
                   ECDSA_To_DER (R_Out, S_Out, 48, Sig_DER, Sig_Len);
@@ -273,26 +273,37 @@ package body CSR_Builder is
                               Octet : Natural := 0;
                               Idx : X509.N32 := 0;
                            begin
+                              Addr_OK := True;
                               for C of Str loop
                                  if C in '0'..'9' then
                                     Octet := Octet * 10 +
                                        (Character'Pos (C) - Character'Pos ('0'));
+                                    if Octet > 255 then
+                                       Addr_OK := False;   --  "999.1.1.1"
+                                       exit;
+                                    end if;
                                  elsif C = '.' and then Idx < 3 then
                                     Addr (Idx) := X509.Byte (Octet);
                                     Idx := Idx + 1;
                                     Octet := 0;
+                                 else
+                                    Addr_OK := False;
+                                    exit;
                                  end if;
                               end loop;
-                              if Idx = 3 then
+                              if Addr_OK and then Idx = 3 then
                                  Addr (3) := X509.Byte (Octet);
-                                 Addr_OK := True;
+                              else
+                                 Addr_OK := False;
                               end if;
                            end;
-                           if Addr_OK then
-                              Put_Byte (SAN_Buf, SAN_Pos, 16#87#);
-                              Put_Length (SAN_Buf, SAN_Pos, 4);
-                              Put_Bytes (SAN_Buf, SAN_Pos, Addr);
+                           if not Addr_OK then
+                              OK := False;   --  unusable SAN: refuse, never drop it
+                              return;
                            end if;
+                           Put_Byte (SAN_Buf, SAN_Pos, 16#87#);
+                           Put_Length (SAN_Buf, SAN_Pos, 4);
+                           Put_Bytes (SAN_Buf, SAN_Pos, Addr);
                         end;
                      else
                         Put_Byte (SAN_Buf, SAN_Pos, 16#82#);
@@ -549,5 +560,182 @@ package body CSR_Builder is
 
       OK := True;
    end Parse_CSR;
+
+
+   procedure Verify_CSR (DER : X509.Byte_Seq; OK : out Boolean) is
+      Pos : X509.N32 := 0;
+
+      procedure TL (P : in out X509.N32; Tag : X509.Byte;
+                    Content : out X509.N32; Len : out X509.N32; Good : out Boolean) is
+      begin
+         Content := 0; Len := 0; Good := False;
+         if P > DER'Last or else DER (P) /= Tag then return; end if;
+         P := P + 1;
+         if P > DER'Last then return; end if;
+         if DER (P) < 16#80# then
+            Len := X509.N32 (DER (P)); P := P + 1;
+         elsif DER (P) = 16#81# and then P + 1 <= DER'Last then
+            Len := X509.N32 (DER (P + 1)); P := P + 2;
+         elsif DER (P) = 16#82# and then P + 2 <= DER'Last then
+            Len := X509.N32 (DER (P + 1)) * 256 + X509.N32 (DER (P + 2)); P := P + 3;
+         else
+            return;
+         end if;
+         if Len > DER'Last - P + 1 then return; end if;
+         Content := P;
+         Good := True;
+      end TL;
+
+      --  ECDSA-Sig-Value ::= SEQUENCE { r INTEGER, s INTEGER } into two
+      --  fixed halves, right-aligned, leading zero stripped.
+      procedure Split_Sig (Sig : X509.Byte_Seq; N : X509.N32;
+                           R, S : out X509.Byte_Seq; Good : out Boolean) is
+         P : X509.N32 := Sig'First;
+         C, L : X509.N32;
+         procedure Half (Out_H : out X509.Byte_Seq; G : out Boolean) is
+            IC, IL : X509.N32;
+         begin
+            Out_H := (others => 0); G := False;
+            if P > Sig'Last or else Sig (P) /= 16#02# then return; end if;
+            P := P + 1;
+            if P > Sig'Last then return; end if;
+            IL := X509.N32 (Sig (P)); P := P + 1;
+            if IL = 0 or else IL > Sig'Last - P + 1 then return; end if;
+            IC := P; P := P + IL;
+            while IL > 0 and then Sig (IC) = 0 loop
+               IC := IC + 1; IL := IL - 1;
+            end loop;
+            if IL > N then return; end if;
+            for I in 0 .. IL - 1 loop
+               Out_H (Out_H'First + (N - IL) + I) := Sig (IC + I);
+            end loop;
+            G := True;
+         end Half;
+         G1, G2 : Boolean;
+      begin
+         R := (others => 0); S := (others => 0); Good := False;
+         if P > Sig'Last or else Sig (P) /= 16#30# then return; end if;
+         P := P + 1;
+         if P > Sig'Last then return; end if;
+         L := X509.N32 (Sig (P)); P := P + 1;
+         if L > Sig'Last - P + 1 then return; end if;
+         C := P;
+         Half (R, G1); Half (S, G2);
+         Good := G1 and G2 and P = C + L;
+      end Split_Sig;
+
+      Outer_C, Outer_L, CRI_C, CRI_L, Alg_C, Alg_L, Sig_C, Sig_L : X509.N32;
+      G : Boolean;
+      CRI_Start : X509.N32;
+      SPKI      : X509.Byte_Seq (0 .. 511) := (others => 0);
+      SPKI_Len  : X509.N32;
+      Subject   : Cert_Builder.DN;
+      Bits_First, Bits_Len : X509.N32;
+      Bits_OK   : Boolean;
+   begin
+      OK := False;
+      TL (Pos, 16#30#, Outer_C, Outer_L, G);
+      if not G then return; end if;
+      CRI_Start := Pos;
+      TL (Pos, 16#30#, CRI_C, CRI_L, G);                    --  CertificationRequestInfo
+      if not G then return; end if;
+      Pos := CRI_C + CRI_L;
+      TL (Pos, 16#30#, Alg_C, Alg_L, G);                    --  signatureAlgorithm
+      if not G then return; end if;
+      Pos := Alg_C + Alg_L;
+      TL (Pos, 16#03#, Sig_C, Sig_L, G);                    --  signature BIT STRING
+      if not G or else Sig_L < 2 or else DER (Sig_C) /= 0 then return; end if;
+
+      Parse_CSR (DER, Subject, SPKI, SPKI_Len, G);
+      if not G or else SPKI_Len = 0 then return; end if;
+      Cert_Builder.Public_Key_Bits (SPKI (0 .. SPKI_Len - 1), Bits_First, Bits_Len, Bits_OK);
+      if not Bits_OK then return; end if;
+
+      declare
+         CRI     : constant X509.Byte_Seq := DER (CRI_Start .. CRI_C + CRI_L - 1);
+         Sig     : constant X509.Byte_Seq := DER (Sig_C + 1 .. Sig_C + Sig_L - 1);
+         Key     : constant X509.Byte_Seq := SPKI (Bits_First .. Bits_First + Bits_Len - 1);
+         Is_Ed   : constant Boolean :=
+           (for some I in SPKI'First .. SPKI_Len - 5 =>
+              SPKI (I .. I + 4) = X509.Byte_Seq'(16#06#, 16#03#, 16#2B#, 16#65#, 16#70#));
+         Is_P256 : constant Boolean :=
+           (for some I in SPKI'First .. SPKI_Len - 8 =>
+              SPKI (I .. I + 7) = X509.Byte_Seq'(16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#03#, 16#01#, 16#07#));
+         Is_P384 : constant Boolean :=
+           (for some I in SPKI'First .. SPKI_Len - 5 =>
+              SPKI (I .. I + 4) = X509.Byte_Seq'(16#2B#, 16#81#, 16#04#, 16#00#, 16#22#));
+      begin
+         if Is_Ed then
+            if Key'Length /= 32 or else Sig'Length /= 64 then return; end if;
+            declare
+               SM_Len  : constant N32 := 64 + N32 (CRI'Length);
+               SM      : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+               M       : Byte_Seq (0 .. SM_Len - 1);
+               PK      : Bytes_32;
+               Msg_Len : I32;
+            begin
+               for I in 0 .. 63 loop
+                  SM (N32 (I)) := Byte (Sig (Sig'First + X509.N32 (I)));
+               end loop;
+               for I in 0 .. CRI'Length - 1 loop
+                  SM (64 + N32 (I)) := Byte (CRI (CRI'First + X509.N32 (I)));
+               end loop;
+               for I in 0 .. 31 loop
+                  PK (N32 (I)) := Byte (Key (Key'First + X509.N32 (I)));
+               end loop;
+               SPARKTLSCrypto.Ed25519.Open (M, OK, Msg_Len, SM, PK);
+            end;
+         elsif Is_P256 then
+            if Key'Length /= 65 or else Key (Key'First) /= 16#04# then return; end if;
+            declare
+               use SPARKNaCl.Hashing.SHA256;
+               Data : Byte_Seq (0 .. N32 (CRI'Length) - 1);
+               H    : Digest;
+               R, S : X509.Byte_Seq (0 .. 31);
+               Qx, Qy, RN, SN : Byte_Seq (0 .. 31);
+            begin
+               for I in Data'Range loop
+                  Data (I) := Byte (CRI (CRI'First + X509.N32 (I)));
+               end loop;
+               Hash (H, Data);
+               Split_Sig (Sig, 32, R, S, G);
+               if not G then return; end if;
+               for I in N32 range 0 .. 31 loop
+                  Qx (I) := Byte (Key (Key'First + 1 + X509.N32 (I)));
+                  Qy (I) := Byte (Key (Key'First + 33 + X509.N32 (I)));
+                  RN (I) := Byte (R (X509.N32 (I)));
+                  SN (I) := Byte (S (X509.N32 (I)));
+               end loop;
+               OK := SPARKTLSCrypto.P256.ECDSA.Verify (Bytes_32 (H), Qx, Qy, RN, SN);
+            end;
+         elsif Is_P384 then
+            if Key'Length /= 97 or else Key (Key'First) /= 16#04# then return; end if;
+            declare
+               use SPARKNaCl.Hashing.SHA384;
+               Data : Byte_Seq (0 .. N32 (CRI'Length) - 1);
+               H    : Digest;
+               R, S : X509.Byte_Seq (0 .. 47);
+               Qx, Qy, RN, SN : Byte_Seq (0 .. 47);
+            begin
+               for I in Data'Range loop
+                  Data (I) := Byte (CRI (CRI'First + X509.N32 (I)));
+               end loop;
+               Hash (H, Data);
+               Split_Sig (Sig, 48, R, S, G);
+               if not G then return; end if;
+               for I in N32 range 0 .. 47 loop
+                  Qx (I) := Byte (Key (Key'First + 1 + X509.N32 (I)));
+                  Qy (I) := Byte (Key (Key'First + 49 + X509.N32 (I)));
+                  RN (I) := Byte (R (X509.N32 (I)));
+                  SN (I) := Byte (S (X509.N32 (I)));
+               end loop;
+               OK := SPARKTLSCrypto.P384.ECDSA.Verify (Bytes_48 (H), Qx, Qy, RN, SN);
+            end;
+         end if;
+      end;
+   exception
+      when others =>
+         OK := False;
+   end Verify_CSR;
 
 end CSR_Builder;

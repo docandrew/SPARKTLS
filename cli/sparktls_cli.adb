@@ -1,3 +1,5 @@
+with CLI_Util;
+with Ada.Exceptions;
 with Ada.Command_Line;
 with Ada.Text_IO;    use Ada.Text_IO;
 with Cmd_Show;
@@ -92,5 +94,9 @@ begin
          Print_Usage;
          Ada.Command_Line.Set_Exit_Status (2);
       end if;
+   exception
+      when E : CLI_Util.Argument_Error =>
+         Put_Line (Standard_Error, "Error: " & Ada.Exceptions.Exception_Message (E));
+         Ada.Command_Line.Set_Exit_Status (2);
    end;
 end SPARKTLS_CLI;

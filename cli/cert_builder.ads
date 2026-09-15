@@ -42,9 +42,30 @@ package Cert_Builder is
       Valid_Days  : Natural := 365;
       SANs        : SAN_Array := (others => <>);
       SAN_Count   : Natural := 0;
+      --  Authority Key Identifier for a CA-signed certificate: the issuer's
+      --  Subject Key Identifier. Len = 0 means self-signed, and the
+      --  certificate's own key identifier is used (RFC 5280 4.2.1.1).
+      Issuer_Key_ID     : X509.Byte_Seq (0 .. 31) := (others => 0);
+      Issuer_Key_ID_Len : X509.N32 := 0;
    end record;
 
    --  Build a complete DER-encoded X.509v3 certificate.
+   --  Fill Params.Issuer_Key_ID from the CA certificate: its Subject Key
+   --  Identifier extension when present, otherwise the RFC 5280 4.2.1.2
+   --  method (1) value, SHA-1 of its subjectPublicKey BIT STRING. A leaf
+   --  whose AKID does not match the CA's SKID cannot be chained by OpenSSL
+   --  ("unable to get local issuer certificate"), which is how the CLI lane
+   --  caught the old builder using the LEAF's key hash (2026-09-14).
+   --  Locate the subjectPublicKey BIT STRING content inside a DER
+   --  SubjectPublicKeyInfo (the key bytes, unused-bits byte excluded).
+   --  The CLI handles standalone SPKIs (key files, CSRs), which X509.Parse
+   --  does not take, so the walk lives here.
+   procedure Public_Key_Bits
+     (SPKI : X509.Byte_Seq; First : out X509.N32; Length : out X509.N32; OK : out Boolean);
+
+   procedure Set_Issuer_Key_ID
+     (Params : in out Cert_Params; CA_DER : X509.Byte_Seq; CA : X509.Certificate);
+
    procedure Build_Certificate
      (Params   : Cert_Params;
       Cert_DER : out Cert_DER_Buf;

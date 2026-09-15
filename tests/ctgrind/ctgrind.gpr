@@ -29,7 +29,8 @@ project Ctgrind is
                  "dudect_x25519.adb",
                  "dudect_p256_ecdsa.adb",
                  "dudect_p384_ecdsa.adb",
-                 "dudect_aead.adb");
+                 "dudect_aead.adb",
+                 "dudect_negative_control.adb");
 
    package Compiler is
       --  Force a baseline x86-64-v2 codegen target so the compiler

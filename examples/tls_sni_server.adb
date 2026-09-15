@@ -114,6 +114,9 @@ procedure TLS_SNI_Server is
       Set_Socket_Option
         (Client_Sock, Socket_Level,
          (Name => Receive_Timeout, Timeout => 10.0));
+      Set_Socket_Option
+        (Client_Sock, Socket_Level,
+         (Name => Send_Timeout, Timeout => 10.0));
 
       S := Server.Configure
         ((Local           => Id_Default'Unchecked_Access,
@@ -158,8 +161,12 @@ procedure TLS_SNI_Server is
             when others => null;
          end case;
       end loop;
+      --  Give the handshake slot back on every exit (see SPARKTLS.Drop).
+      SPARKTLS.Drop (S);
+
    exception
       when E : others =>
+         SPARKTLS.Drop (S);
          Put_Line ("  Connection error: "
                    & Ada.Exceptions.Exception_Message (E));
    end Handle_Connection;

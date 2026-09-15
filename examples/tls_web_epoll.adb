@@ -24,6 +24,9 @@ with Ada.Streams;           use Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Deallocation;
 with Ada.Calendar;
+with Ada.Environment_Variables;
+with GNAT.OS_Lib;
+with Ada.Real_Time;
 with Ada.Calendar.Formatting;
 with Interfaces;            use Interfaces;
 with Interfaces.C;          use Interfaces.C;
@@ -69,35 +72,101 @@ procedure TLS_Web_Epoll is
    --  read(2) / write(2) — no per-byte copy needed. Cuts ~16 KB of
    --  byte-shuffling per record on the bulk-throughput path.
 
-   --  Read a file into a Byte_Seq (for serving static content)
-   function Read_File (Path : String) return Byte_Seq is
-      package SIO renames Ada.Streams.Stream_IO;
-      F    : SIO.File_Type;
-      Size : Natural;
+   subtype Cached_Body_Access is TLS_Echo_Pool.Body_Access;
+   procedure Free_Cached_Body is new
+     Ada.Unchecked_Deallocation (Byte_Seq, TLS_Echo_Pool.Body_Access);
+
+   --  Only the request path's characters an HTTP path may carry, no
+   --  ".." segment, an absolute path. Anything else is answered 404 and
+   --  never touches the file system: "GET /../../etc/passwd" served any
+   --  file the process could read before 2026-09-14.
+   function Safe_Path (Path : String) return Boolean is
    begin
-      if not Ada.Directories.Exists (Path) then
-         return Byte_Seq'(0 => 0);
+      if Path'Length = 0 or else Path (Path'First) /= '/' then
+         return False;
+      end if;
+      for I in Path'Range loop
+         if Character'Pos (Path (I)) < 32 or else Character'Pos (Path (I)) > 126
+           or else Path (I) = '\'
+         then
+            return False;
+         end if;
+      end loop;
+      for I in Path'First .. Path'Last - 1 loop
+         if Path (I) = '.' and then Path (I + 1) = '.' then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Safe_Path;
+
+   --  Peer-controlled text for the log: control characters become '?', so
+   --  a request line cannot forge log entries or drive the terminal.
+   function Printable (S : String) return String is
+      R : String := S;
+   begin
+      for I in R'Range loop
+         if Character'Pos (R (I)) < 32 or else Character'Pos (R (I)) > 126 then
+            R (I) := '?';
+         end if;
+      end loop;
+      return R;
+   end Printable;
+
+   --  Read a regular file into a heap buffer (for serving static content).
+   --  Symbolic links are followed, as a web server's docroot normally
+   --  expects; Safe_Path keeps the request inside the docroot. Read in
+   --  chunks: the old version put the whole file on the task stack, and a
+   --  request for anything over a few MB was a stack overflow.
+   Max_File_Size : constant := 268435456;   --  256 MB (bench payloads)
+
+   function Read_File (Path : String) return Cached_Body_Access is
+      package SIO renames Ada.Streams.Stream_IO;
+      use type Ada.Directories.File_Kind;
+      use type SIO.Count;
+      F    : SIO.File_Type;
+      Size : SIO.Count;
+      Res  : Cached_Body_Access;
+   begin
+      if not Ada.Directories.Exists (Path)
+        or else Ada.Directories.Kind (Path) /= Ada.Directories.Ordinary_File
+      then
+         return null;
       end if;
       SIO.Open (F, SIO.In_File, Path);
-      Size := Natural (SIO.Size (F));
-      if Size = 0 or Size > 268435456 then  --  256 MB max (bench-friendly)
+      Size := SIO.Size (F);
+      if Size = 0 or else Size > Max_File_Size then
          SIO.Close (F);
-         return Byte_Seq'(0 => 0);
+         return null;
       end if;
+      Res := new Byte_Seq (0 .. N32 (Size) - 1);
       declare
-         B   : Stream_Element_Array (1 .. Stream_Element_Offset (Size));
-         Last : Stream_Element_Offset;
-         Res : Byte_Seq (0 .. N32 (Size) - 1);
+         Chunk : Stream_Element_Array (1 .. 65536);
+         Last  : Stream_Element_Offset;
+         Pos   : N32 := 0;
       begin
-         SIO.Read (F, B, Last);
-         SIO.Close (F);
-         for I in B'Range loop
-            Res (N32 (I - 1)) := SPARKNaCl.Byte (B (I));
+         while Pos < N32 (Size) loop
+            SIO.Read (F, Chunk, Last);
+            exit when Last < Chunk'First;
+            for I in Chunk'First .. Last loop
+               exit when Pos > Res'Last;
+               Res (Pos) := SPARKNaCl.Byte (Chunk (I));
+               Pos := Pos + 1;
+            end loop;
          end loop;
-         return Res;
+         SIO.Close (F);
+         if Pos /= N32 (Size) then
+            Free_Cached_Body (Res);
+            return null;
+         end if;
       end;
+      return Res;
    exception
-      when others => return Byte_Seq'(0 => 0);
+      when others =>
+         if Res /= null then
+            Free_Cached_Body (Res);
+         end if;
+         return null;
    end Read_File;
 
    --  Build HTTP response
@@ -136,7 +205,16 @@ procedure TLS_Web_Epoll is
    Id_OK   : Boolean;
    Docroot : String (1 .. 256) := (others => ' ');
    Doc_Len : Natural := 0;
-   Port    : constant := 8443;
+   --  SPARKTLS_PORT overrides the default, as in tls_blocking_server, so
+   --  the integration runner can rotate ports.
+   function Get_Port return Natural is
+   begin
+      if Ada.Environment_Variables.Exists ("SPARKTLS_PORT") then
+         return Natural'Value (Ada.Environment_Variables.Value ("SPARKTLS_PORT"));
+      end if;
+      return 8443;
+   end Get_Port;
+   Port    : constant Natural := Get_Port;
 
    --  Single-slot file cache: avoids re-reading the same file from
    --  disk (and re-allocating its Byte_Seq) on every request. The
@@ -148,9 +226,6 @@ procedure TLS_Web_Epoll is
    --  compiling but allocating a constrained subtype from an unconstrained
    --  value -- a latent Constraint_Error for any body not exactly 128 KB.
    --  An example must not share a type with the library's internals.
-   type Cached_Body_Access is access Byte_Seq;
-   procedure Free_Cached_Body is new
-     Ada.Unchecked_Deallocation (Byte_Seq, Cached_Body_Access);
 
    Cache_Path     : String (1 .. 256) := (others => ' ');
    Cache_Path_Len : Natural := 0;
@@ -166,15 +241,15 @@ procedure TLS_Web_Epoll is
          return Cache_Body;
       end if;
       declare
-         Loaded : constant Byte_Seq := Read_File (Full);
+         Loaded : constant Cached_Body_Access := Read_File (Full);
       begin
-         if Loaded'Length <= 1 then
+         if Loaded = null then
             return null;
          end if;
          if Cache_Body /= null then
             Free_Cached_Body (Cache_Body);
          end if;
-         Cache_Body := new Byte_Seq'(Loaded);
+         Cache_Body := Loaded;
          if Full'Length <= Cache_Path'Length then
             Cache_Path (1 .. Full'Length) := Full;
             Cache_Path_Len := Full'Length;
@@ -224,12 +299,162 @@ procedure TLS_Web_Epoll is
    Ev       : aliased Epoll_Event;
    Events   : aliased Epoll_Event_Array (0 .. 63) := (others => <>);
 
+   --  Deadlines. The library is sans-I/O: it learns nothing about a
+   --  connection until bytes arrive, so a peer that connects and goes
+   --  silent (or stalls part-way through its ClientHello) holds a
+   --  connection slot and a SPARKTLS.HS_Pool slot until the APPLICATION
+   --  gives up on it. Handshake_Timeout bounds the time from accept to
+   --  Handshake_Done; Idle_Timeout bounds the gap between requests on a
+   --  connection that is up. Both come from the environment for tests
+   --  (SPARKTLS_HANDSHAKE_TIMEOUT / SPARKTLS_IDLE_TIMEOUT, seconds).
+   function Env_Seconds (Name : String; Default : Duration) return Duration is
+   begin
+      if Ada.Environment_Variables.Exists (Name) then
+         return Duration'Value (Ada.Environment_Variables.Value (Name));
+      end if;
+      return Default;
+   end Env_Seconds;
+
+   use type Ada.Real_Time.Time;
+   use type Ada.Real_Time.Time_Span;
+   Handshake_Timeout : constant Ada.Real_Time.Time_Span :=
+     Ada.Real_Time.To_Time_Span (Env_Seconds ("SPARKTLS_HANDSHAKE_TIMEOUT", 10.0));
+   Idle_Timeout      : constant Ada.Real_Time.Time_Span :=
+     Ada.Real_Time.To_Time_Span (Env_Seconds ("SPARKTLS_IDLE_TIMEOUT", 60.0));
+   --  How long epoll_wait may sleep before the deadline sweep runs.
+   Sweep_Interval_Ms : constant := 1000;
+
+   --  Tear a connection down: out of epoll, socket closed, and the
+   --  session Dropped so its handshake slot goes back to the pool.
+   procedure Close_Conn (Idx : Conn_Index; Why : String := "") is
+      Conn : Connection renames Conns (Idx);
+      Dummy : int;
+   begin
+      if Conn.FD >= 0 then
+         Dummy := Epoll_Ctl (Epfd, EPOLL_CTL_DEL, Conn.FD, null);
+         Dummy := C_Close (Conn.FD);
+         Conn.FD := -1;
+      end if;
+      Conn.State := Closed;
+      Conn.Body_Ref := null;
+      Conn.Out_Len := 0;
+      Conn.Out_Sent := 0;
+      Conn.Close_Queued := False;
+      Conn.Want_Out := False;
+      SPARKTLS.Drop (Conn.S);
+      if Why /= "" then
+         Put_Line ("  closed: " & Why);
+      end if;
+   end Close_Conn;
+
+   --  Close every connection that is past its deadline.
+   procedure Sweep_Deadlines is
+      Now : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+   begin
+      for I in Conn_Index loop
+         if Conns (I).State = Handshaking
+           and then Now - Conns (I).Opened_At > Handshake_Timeout
+         then
+            Close_Conn (I, "handshake timeout");
+         elsif Conns (I).State in Ready | Closing
+           and then Now - Conns (I).Last_Activity > Idle_Timeout
+         then
+            Close_Conn (I, "idle timeout");
+         end if;
+      end loop;
+   end Sweep_Deadlines;
+
+   --  Arm or disarm EPOLLOUT for a connection.
+   procedure Arm_Output (Idx : Conn_Index; On : Boolean) is
+      Conn  : Connection renames Conns (Idx);
+      Ev    : aliased Epoll_Event;
+      Dummy : int;
+   begin
+      if Conn.Want_Out = On or else Conn.FD < 0 then
+         return;
+      end if;
+      Ev.Events  := unsigned (EPOLLIN) or (if On then unsigned (EPOLLOUT) else 0);
+      Ev.Data.FD := Conn.FD;
+      Dummy := Epoll_Ctl (Epfd, EPOLL_CTL_MOD, Conn.FD, Ev'Access);
+      Conn.Want_Out := On;
+   end Arm_Output;
+
+   EAGAIN : constant := 11;
+
+   --  Move output towards the socket: pending ciphertext first, then more
+   --  from the session, then more plaintext from the response body, then
+   --  close_notify. Stops when the socket will not take more (EPOLLOUT is
+   --  armed and the rest waits) or when the response is complete (the
+   --  connection becomes Closed for the event loop to reap). write(2) on
+   --  a non-blocking socket may take part of a buffer; ignoring that
+   --  return value corrupted every response larger than the socket buffer
+   --  before 2026-09-14.
+   procedure Pump_Send (Idx : Conn_Index) is
+      Conn    : Connection renames Conns (Idx);
+      Written : N32;
+   begin
+      loop
+         if Conn.Out_Sent < Conn.Out_Len then
+            declare
+               Wr : constant long :=
+                 C_Write (Conn.FD, Conn.Out_Buf (Conn.Out_Sent)'Address,
+                          size_t (Conn.Out_Len - Conn.Out_Sent));
+            begin
+               if Wr > 0 then
+                  Conn.Out_Sent := Conn.Out_Sent + N32 (Wr);
+                  Conn.Last_Activity := Ada.Real_Time.Clock;
+               elsif Wr < 0 and then GNAT.OS_Lib.Errno = EAGAIN then
+                  Arm_Output (Idx, True);
+                  return;
+               else
+                  Conn.State := Closed;   --  EPIPE, reset, ...
+                  return;
+               end if;
+               if Conn.Out_Sent < Conn.Out_Len then
+                  Arm_Output (Idx, True);
+                  return;
+               end if;
+            end;
+         end if;
+         Conn.Out_Len := 0;
+         Conn.Out_Sent := 0;
+
+         SPARKTLS.Drain_Ciphertext (Conn.S, Conn.Out_Buf, Conn.Out_Len);
+         if Conn.Out_Len = 0 then
+            if Conn.State = Sending and then Conn.Body_Ref /= null
+              and then Conn.Body_Off < N32 (Conn.Body_Ref'Length)
+            then
+               SPARKTLS.Write_Plaintext
+                 (Conn.S,
+                  Conn.Body_Ref (Conn.Body_Ref'First + Conn.Body_Off .. Conn.Body_Ref'Last),
+                  Written);
+               if Written = 0 then
+                  Conn.State := Closed;
+                  return;
+               end if;
+               Conn.Body_Off := Conn.Body_Off + Written;
+            elsif Conn.State = Sending and then not Conn.Close_Queued then
+               --  Connection: close -- our close_notify ends the response.
+               SPARKTLS.Server.Close_Notify (Conn.S);
+               Conn.Close_Queued := True;
+            else
+               Arm_Output (Idx, False);
+               if Conn.State = Sending then
+                  Conn.State := Closed;
+               end if;
+               return;
+            end if;
+         end if;
+      end loop;
+   end Pump_Send;
+
    procedure Handle_Readable (Idx : Conn_Index) is
       Conn : Connection renames Conns (Idx);
       Rd : long;
       Fed : N32;
       Res : SPARKTLS.Action;
    begin
+      Conn.Last_Activity := Ada.Real_Time.Clock;
       --  Read directly into Raw_Buf — Byte_Seq is array of Unsigned_8,
       --  byte-identical to a C buffer.
       Rd := C_Read (Conn.FD, Raw_Buf'Address, Raw_Buf'Length);
@@ -246,15 +471,8 @@ procedure TLS_Web_Epoll is
 
          case Res is
             when SPARKTLS.Has_Output =>
-               declare
-                  N : N32;
-                  Wr : long;
-               begin
-                  SPARKTLS.Drain_Ciphertext (Conn.S, Snd_Buf, N);
-                  if N > 0 then
-                     Wr := C_Write (Conn.FD, Snd_Buf'Address, size_t (N));
-                  end if;
-               end;
+               Pump_Send (Idx);
+               exit when Conn.State = Closed or else Conn.Want_Out;
 
             when SPARKTLS.Need_Input =>
                exit;  --  wait for more data from epoll
@@ -275,6 +493,11 @@ procedure TLS_Web_Epoll is
                                    Conn.Req_Len + App_N - 1) :=
                         App (0 .. App_N - 1);
                      Conn.Req_Len := Conn.Req_Len + App_N;
+                  else
+                     --  Request larger than we accept: close rather than
+                     --  hold a slot for a peer we will never answer.
+                     Conn.State := Closed;
+                     exit;
                   end if;
 
                   --  Check if we have a complete HTTP request
@@ -320,7 +543,7 @@ procedure TLS_Web_Epoll is
                                           Character'Val (
                                              Conn.Req_Buf (Path_Start + J));
                                     end loop;
-                                    Put_Line ("  GET " & Path);
+                                    Put_Line ("  GET " & Printable (Path));
 
                                     --  Serve file
                                     declare
@@ -371,8 +594,8 @@ procedure TLS_Web_Epoll is
 
                                        Full : constant String :=
                                           Docroot (1 .. Doc_Len) & Path;
-                                       Body_Ref : Cached_Body_Access :=
-                                          Get_Cached (Full);
+                                       Body_Ref : constant Cached_Body_Access :=
+                                          (if Safe_Path (Path) then Get_Cached (Full) else null);
                                        --  Header is small; build inline (no body copy).
                                        Hdr_Str : constant String :=
                                           (if Body_Ref = null
@@ -408,7 +631,9 @@ procedure TLS_Web_Epoll is
                                                (Character'Pos (Hdr_Str (I)));
                                        end loop;
 
-                                       --  Send header (and 404 inline body if applicable).
+                                       --  Header (and the 404 body) into the session, then
+                                       --  the body and close_notify by reference through
+                                       --  Pump_Send as the socket takes them.
                                        declare
                                           Total_Sent : N32 := 0;
                                        begin
@@ -419,70 +644,13 @@ procedure TLS_Web_Epoll is
                                                 Written);
                                              exit when Written = 0;
                                              Total_Sent := Total_Sent + Written;
-                                             loop
-                                                declare
-                                                   Snd_N : N32;
-                                                begin
-                                                   SPARKTLS.Drain_Ciphertext
-                                                     (Conn.S, Snd_Buf, Snd_N);
-                                                   exit when Snd_N = 0;
-                                                   Wr := C_Write
-                                                     (Conn.FD,
-                                                      Snd_Buf'Address,
-                                                      size_t (Snd_N));
-                                                end;
-                                             end loop;
                                           end loop;
                                        end;
-
-                                       --  Send body by reference (no per-request copy).
-                                       if Body_Ref /= null then
-                                          declare
-                                             Total_Sent : N32 := 0;
-                                             B_Last     : constant N32 := Body_Ref'Last;
-                                             B_First    : constant N32 := Body_Ref'First;
-                                             B_Len      : constant N32 :=
-                                                N32 (Body_Ref'Length);
-                                          begin
-                                             while Total_Sent < B_Len loop
-                                                SPARKTLS.Write_Plaintext
-                                                  (Conn.S,
-                                                   Body_Ref
-                                                     (B_First + Total_Sent .. B_Last),
-                                                   Written);
-                                                exit when Written = 0;
-                                                Total_Sent := Total_Sent + Written;
-                                                loop
-                                                   declare
-                                                      Snd_N : N32;
-                                                   begin
-                                                      SPARKTLS.Drain_Ciphertext
-                                                        (Conn.S, Snd_Buf, Snd_N);
-                                                      exit when Snd_N = 0;
-                                                      Wr := C_Write
-                                                        (Conn.FD,
-                                                         Snd_Buf'Address,
-                                                         size_t (Snd_N));
-                                                   end;
-                                                end loop;
-                                             end loop;
-                                          end;
-                                       end if;
-                                       --  Send close_notify (Connection: close)
-                                       SPARKTLS.Server.Close_Notify (Conn.S);
-                                       loop
-                                          declare
-                                             Snd_N : N32;
-                                          begin
-                                             SPARKTLS.Drain_Ciphertext
-                                               (Conn.S, Snd_Buf, Snd_N);
-                                             exit when Snd_N = 0;
-                                             Wr := C_Write
-                                               (Conn.FD, Snd_Buf'Address,
-                                                size_t (Snd_N));
-                                          end;
-                                       end loop;
-                                       Conn.State := Closed;
+                                       Conn.Body_Ref := Body_Ref;
+                                       Conn.Body_Off := 0;
+                                       Conn.Close_Queued := False;
+                                       Conn.State := Sending;
+                                       Pump_Send (Idx);
                                     end;
                                  end;
                               end if;
@@ -493,20 +661,16 @@ procedure TLS_Web_Epoll is
                      end loop;
                   end if;
                end;
+               exit when Conn.State in Sending | Closed;
 
             when SPARKTLS.Shutdown =>
-               --  Send our close_notify back
+               --  Answer the peer's close_notify with ours, then close once
+               --  the socket has taken it.
                SPARKTLS.Server.Close_Notify (Conn.S);
-               declare
-                  Snd_N : N32;
-                  Wr    : long;
-               begin
-                  SPARKTLS.Drain_Ciphertext (Conn.S, Snd_Buf, Snd_N);
-                  if Snd_N > 0 then
-                     Wr := C_Write (Conn.FD, Snd_Buf'Address, size_t (Snd_N));
-                  end if;
-               end;
-               Conn.State := Closed;
+               Conn.Body_Ref := null;
+               Conn.Close_Queued := True;
+               Conn.State := Sending;
+               Pump_Send (Idx);
                exit;
 
             when SPARKTLS.Error_Alert =>
@@ -574,7 +738,7 @@ begin
    Dummy := C_Setsockopt (Sock_FD, SOL_SOCKET, SO_REUSEADDR,
                            One'Access, 4);
 
-   Addr.Sin_Port := Htons (Port);
+   Addr.Sin_Port := Htons (unsigned_short (Port));
    Addr.Sin_Addr := 0;  --  INADDR_ANY
 
    if C_Bind (Sock_FD, Addr'Access, Sockaddr_In'Size / 8) < 0 then
@@ -588,6 +752,13 @@ begin
    end if;
 
    --  Create epoll
+   --  A peer that closes before we finish writing must not kill the
+   --  process (write(2) raises SIGPIPE; GNAT.Sockets is not used here).
+   declare
+      Old_Handler : System.Address;
+   begin
+      Old_Handler := C_Signal (SIGPIPE, SIG_IGN);
+   end;
    Epfd := Epoll_Create1 (0);
    if Epfd < 0 then
       Put_Line ("epoll_create1() failed");
@@ -603,7 +774,7 @@ begin
 
    --  Event loop
    loop
-      Nfds := Epoll_Wait (Epfd, Events (Events'First)'Unrestricted_Access, 64, -1);
+      Nfds := Epoll_Wait (Epfd, Events (Events'First)'Unrestricted_Access, 64, Sweep_Interval_Ms);
       if Nfds < 0 then
          Put_Line ("epoll_wait error");
          exit;
@@ -629,6 +800,16 @@ begin
                         Conns (Conn_Index (Slot)).FD := Client_FD;
                         Conns (Conn_Index (Slot)).State := Handshaking;
                         Conns (Conn_Index (Slot)).Req_Len := 0;
+                        Conns (Conn_Index (Slot)).Opened_At := Ada.Real_Time.Clock;
+                        Conns (Conn_Index (Slot)).Last_Activity := Ada.Real_Time.Clock;
+                        --  A reused slot must not carry the previous
+                        --  connection's unsent bytes or body reference.
+                        Conns (Conn_Index (Slot)).Body_Ref := null;
+                        Conns (Conn_Index (Slot)).Body_Off := 0;
+                        Conns (Conn_Index (Slot)).Out_Len := 0;
+                        Conns (Conn_Index (Slot)).Out_Sent := 0;
+                        Conns (Conn_Index (Slot)).Close_Queued := False;
+                        Conns (Conn_Index (Slot)).Want_Out := False;
                         Conns (Conn_Index (Slot)).S :=
                           SPARKTLS.Server.Configure
                             ((Local   => Id'Unchecked_Access,
@@ -653,18 +834,37 @@ begin
                Hit : constant Integer := Find_By_FD (Events (I).Data.FD);
             begin
                if Hit >= 0 then
-                  Handle_Readable (Conn_Index (Hit));
-                  if Conns (Conn_Index (Hit)).State = Closed then
-                     Dummy := Epoll_Ctl
-                       (Epfd, EPOLL_CTL_DEL,
-                        Conns (Conn_Index (Hit)).FD, null);
-                     Dummy := C_Close (Conns (Conn_Index (Hit)).FD);
-                     Conns (Conn_Index (Hit)).FD := -1;
-                  end if;
+                  declare
+                     Idx : constant Conn_Index := Conn_Index (Hit);
+                     Ev  : constant unsigned := Events (I).Events;
+                  begin
+                     if (Ev and (unsigned (EPOLLERR) or unsigned (EPOLLHUP))) /= 0
+                       and then (Ev and unsigned (EPOLLIN)) = 0
+                     then
+                        Conns (Idx).State := Closed;
+                     else
+                        if (Ev and unsigned (EPOLLOUT)) /= 0 then
+                           --  Socket drained: continue the response.
+                           Pump_Send (Idx);
+                        end if;
+                        if (Ev and unsigned (EPOLLIN)) /= 0
+                          and then Conns (Idx).State /= Closed
+                        then
+                           Handle_Readable (Idx);
+                        end if;
+                     end if;
+                     if Conns (Idx).State = Closed then
+                        Close_Conn (Idx);
+                     end if;
+                  end;
                end if;
             end;
          end if;
       end loop;
+
+      --  Runs after every wake-up, including the idle ones epoll_wait's
+      --  timeout produces, so a silent peer cannot hold a slot for long.
+      Sweep_Deadlines;
    end loop;
 
 end TLS_Web_Epoll;

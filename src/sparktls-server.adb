@@ -333,12 +333,75 @@ is
       Result            : out Action)
    with Pre => S.State = Wait_Client_Hello and then S.Role = Role_Server;
 
+   --  Can the client use identity Id? Version-dependent (RFC 8446 4.4.2.2,
+   --  RFC 5246 7.4.1.4.1, RFC 8422 5.1.1):
+   --    * a signature scheme the client offered must fit the key (TLS 1.3:
+   --      the ECDSA curve is part of the scheme; TLS 1.2: PKCS#1 v1.5 also
+   --      counts); a TLS 1.2 client that sent no signature_algorithms is
+   --      taken to accept anything;
+   --    * TLS 1.2: an ECDHE suite of the key's family must have been
+   --      offered (Suite = that suite), and an ECDSA certificate's curve
+   --      must be in the client's supported_groups (Ed25519 exempt).
+   procedure Identity_Fits
+     (HC      : in Handshake_Context;
+      Version : in TLS_Version;
+      Id      : in Identity;
+      Fits    : out Boolean;
+      Suite   : out Supported_Suite)
+   with
+     Pre => Id.Has_Identity and then Identity_Valid (Id)
+   is
+      Is_12       : constant Boolean := Version = TLS_1_2 or else HC.Cfg.Versions = TLS_1_2_Only;
+      Sig_OK      : Boolean := HC.Peer_Sig_Algo_Count = 0;
+      Family_OK   : Boolean := True;
+      Curve_OK    : Boolean := True;
+   begin
+      Suite := Suite_None;
+      for J in 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+         pragma Loop_Invariant (J < HC.Peer_Sig_Algo_Count);
+         if HC.Peer_Sig_Algos (J) /= Scheme_None
+           and then SPARKTLS.Handshake.Sig_Algo_Compatible_With_Cert
+                      (HC.Peer_Sig_Algos (J), Id.Sign_Algo, Allow_PKCS1_v1_5 => Is_12)
+           and then (Id.Sign_Pref_Count = 0
+                     or else Sig_Scheme_In_List (HC.Peer_Sig_Algos (J), Id.Sign_Prefs, Id.Sign_Pref_Count))
+         then
+            Sig_OK := True;
+         end if;
+      end loop;
+      --  RFC 8446 4.2.4: an identity marked Must_Match_Issuer needs the
+      --  client's certificate_authorities to name one of its issuers.
+      if Id.Must_Match_Issuer
+        and then (HC.Peer_CA_Len = 0
+                  or else not Identity_Issuer_In (Id, HC.Peer_CA_Names (0 .. HC.Peer_CA_Len - 1)))
+      then
+         Sig_OK := False;
+      end if;
+      if Is_12 then
+         case Id.Sign_Algo is
+            when Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519 =>
+               Suite := HC.Best_12_ECDSA;
+            when Sign_RSA_PSS =>
+               Suite := HC.Best_12_RSA;
+            when Sign_None =>
+               null;
+         end case;
+         Family_OK := Suite /= Suite_None;
+         Curve_OK :=
+           (case Id.Sign_Algo is
+              when Sign_ECDSA_P256 => not HC.Client_Saw_Supported_Groups or else HC.Client_Supports_P256,
+              when Sign_ECDSA_P384 => not HC.Client_Saw_Supported_Groups or else HC.Client_Supports_P384,
+              when others => True);
+      end if;
+      Fits := Sig_OK and then Family_OK and then Curve_OK;
+   end Identity_Fits;
+
    procedure Complete_Client_Hello
      (S                 : in out Session;
       D                 : in out SPARKTLS.HS_Pool.HS_Data;
       Candidate_Version : in TLS_Version;
       Candidate_12      : in Supported_Suite;
       Result            : out Action) is
+      Eff_12 : Supported_Suite := Candidate_12;
    begin
       --  RFC 6066 3 + RFC 8446 4.4.2.4: SNI-based certificate
       --  selection. A null callback result means "no match"; use the
@@ -364,6 +427,45 @@ is
          end;
       else
          pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
+      end if;
+
+      --  Identity set (Config.Identities): the first entry the client can
+      --  use wins, the default identity (Local) is tried last. See
+      --  Identity_Fits for the rules. For TLS 1.2 the chosen identity also
+      --  fixes the cipher-suite family, so Eff_12 replaces Candidate_12.
+      if S.HC.Cfg.Identities /= null then
+         declare
+            Set   : constant Identity_Set := S.HC.Cfg.Identities.all;
+            Found : Boolean := False;
+            Suite : Supported_Suite := Suite_None;
+         begin
+            for I in 1 .. Set.Count loop
+               pragma Loop_Invariant (not Found);
+               declare
+                  Id : constant Maybe_Identity_Access := Set.Items (I);
+               begin
+                  if Id /= null and then Id.Has_Identity and then Identity_Valid (Id.all) then
+                     Identity_Fits (S.HC, Candidate_Version, Id.all, Found, Suite);
+                     if Found then
+                        S.HC.Cfg.Local := Valid_Identity_Access (Id);
+                     end if;
+                  end if;
+               end;
+               exit when Found;
+            end loop;
+            if not Found and then S.HC.Cfg.Local.Has_Identity then
+               Identity_Fits (S.HC, Candidate_Version, S.HC.Cfg.Local.all, Found, Suite);
+            end if;
+            if not Found then
+               --  No configured identity the client can use: no shared
+               --  cipher / no common signature algorithm.
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+               return;
+            end if;
+            if Candidate_Version = TLS_1_2 or else S.HC.Cfg.Versions = TLS_1_2_Only then
+               Eff_12 := Suite;
+            end if;
+         end;
       end if;
 
       if not S.HC.Cfg.Local.Has_Identity
@@ -417,9 +519,9 @@ is
                      or S.HC.Client_Supports_P256
                      or S.HC.Client_Supports_P384)
             then
-               if Want_12 and Candidate_12 /= Suite_None then
+               if Want_12 and Eff_12 /= Suite_None then
                   S.Version := TLS_1_2;
-                  S.Negotiated_Suite := Candidate_12;
+                  S.Negotiated_Suite := Eff_12;
                   SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, Cfg, Result);
                else
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
@@ -429,9 +531,9 @@ is
                SPARKTLS.Server.TLS13.Build_Server_Flight_13 (S, D, Cfg, Result);
             end if;
             return;
-         elsif Want_12 and Candidate_12 /= Suite_None then
+         elsif Want_12 and Eff_12 /= Suite_None then
             S.Version := TLS_1_2;
-            S.Negotiated_Suite := Candidate_12;
+            S.Negotiated_Suite := Eff_12;
             --  Old dead guard (= Unsigned_64'Last, unreachable by
             --  type) deleted with the sealed-channel port.
             SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, Cfg, Result);
@@ -676,6 +778,33 @@ is
                            Append
                              (D.Reasm, Byte_Seq (S.Input.Storage (Ix (Frag_Start) .. Ix (Frag_Start + Copy_Len - 1))));
                         end if;
+                        --  When the first record carried fewer than four
+                        --  bytes, Wanted was only the rest of the header, so
+                        --  the length just decoded may ask for more of THIS
+                        --  fragment. Take it now: the record is consumed
+                        --  below as a whole, and leaving the bytes behind
+                        --  stalled the handshake forever (tlsfuzzer
+                        --  large-hello "fragmented", 2-byte first record).
+                        if Copy_Len < Frag_Len
+                          and then Header_Ready (D.Reasm)
+                          and then not Message_Too_Large (D.Reasm)
+                        then
+                           declare
+                              More : constant HS_Msg_Len :=
+                                N32'Min
+                                  (N32'Min (Wanted (D.Reasm), Frag_Len - Copy_Len),
+                                   Free_Space (D.Reasm));
+                           begin
+                              if More > 0 then
+                                 Append
+                                   (D.Reasm,
+                                    Byte_Seq
+                                      (S.Input.Storage
+                                         (Ix (Frag_Start + Copy_Len)
+                                          .. Ix (Frag_Start + Copy_Len + More - 1))));
+                              end if;
+                           end;
+                        end if;
                      end;
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
@@ -761,11 +890,12 @@ is
                               SPARKTLS_Transcript.Start (L);
                               if S.HC.PSK.Offered
                                 and then S.HC.PSK.Binder_Len > 0
-                                and then N32 (Full_Msg'Length) > 3 + S.HC.PSK.Binder_Len
+                                and then S.HC.PSK.Binders_Block_Len > 0
+                                and then N32 (Full_Msg'Length) > S.HC.PSK.Binders_Block_Len
                               then
                                  declare
                                     T : constant N32 :=
-                                      N32 (Full_Msg'Length) - (3 + S.HC.PSK.Binder_Len);
+                                      N32 (Full_Msg'Length) - S.HC.PSK.Binders_Block_Len;
                                  begin
                                     SPARKTLS_Transcript.Suffix_256
                                       (L,
@@ -797,6 +927,11 @@ is
                                  Client_Supports_X25519      => S.HC.Client_Supports_X25519,
                                  Client_Supports_P256        => S.HC.Client_Supports_P256,
                                  Client_Supports_P384        => S.HC.Client_Supports_P384,
+                                 Client_Wants_Staple        => S.HC.Client_Wants_Staple,
+                                 Best_12_ECDSA        => S.HC.Best_12_ECDSA,
+                                 Best_12_RSA        => S.HC.Best_12_RSA,
+                                 Peer_CA_Names        => S.HC.Peer_CA_Names,
+                                 Peer_CA_Len        => S.HC.Peer_CA_Len,
                                  KE                          => S.HC.KE,
                                  HRR_Sent                    => S.HC.HRR_Sent,
                                  Got_HRR                     => S.HC.Got_HRR,
@@ -941,10 +1076,11 @@ is
                         --  silently refreshed BoGo baseline.
                         if S.HC.PSK.Offered
                           and then S.HC.PSK.Binder_Len > 0
-                          and then Frag_Len > 3 + S.HC.PSK.Binder_Len
+                          and then S.HC.PSK.Binders_Block_Len > 0
+                          and then Frag_Len > S.HC.PSK.Binders_Block_Len
                         then
                            declare
-                              T : constant N32 := Frag_Len - (3 + S.HC.PSK.Binder_Len);
+                              T : constant N32 := Frag_Len - S.HC.PSK.Binders_Block_Len;
                            begin
                               SPARKTLS_Transcript.Suffix_256
                                 (L,
@@ -973,6 +1109,11 @@ is
                            Client_Supports_X25519      => S.HC.Client_Supports_X25519,
                            Client_Supports_P256        => S.HC.Client_Supports_P256,
                            Client_Supports_P384        => S.HC.Client_Supports_P384,
+                           Client_Wants_Staple        => S.HC.Client_Wants_Staple,
+                           Best_12_ECDSA        => S.HC.Best_12_ECDSA,
+                           Best_12_RSA        => S.HC.Best_12_RSA,
+                           Peer_CA_Names        => S.HC.Peer_CA_Names,
+                           Peer_CA_Len        => S.HC.Peer_CA_Len,
                            KE                          => S.HC.KE,
                            HRR_Sent                    => S.HC.HRR_Sent,
                            Got_HRR                     => S.HC.Got_HRR,

@@ -4,6 +4,12 @@
 # dudect we want production-realistic cycle counts.)
 #
 # Compile-and-run takes ~30s per harness (50K samples × 2 classes).
+#
+# dudect_negative_control is the canary: the real AEAD encrypt plus a
+# PLANTED secret-dependent delay. It must be flagged; if it ever reads
+# "ok" the statistics or the measurement loop have lost their teeth and
+# no other verdict in this lane means anything. Same role as
+# ct_negative_control in run.sh.
 
 set +e
 
@@ -71,7 +77,31 @@ run_one() {
   return "$status"
 }
 
+#  Canary: the planted leak MUST be detected.
+run_canary() {
+  local name="$1"
+  local exe="$BIN/$name"
+  if [ ! -x "$exe" ]; then
+    echo "  $name: BINARY MISSING ($exe)"
+    return 1
+  fi
+  echo "--- $name (canary: must be flagged) ---"
+  local out
+  out=$("$exe" 2>&1)
+  echo "$out"
+  echo ""
+  if echo "$out" | grep -q "TIMING DEPENDS ON SECRET INPUT"; then
+    echo "  PASS  canary: planted leak detected"
+    echo ""
+    return 0
+  fi
+  echo "  FAIL  canary: planted leak NOT detected -- harness has lost sensitivity"
+  echo ""
+  return 1
+}
+
 fail=0
+run_canary dudect_negative_control || fail=1
 run_one dudect_x25519      || fail=1
 run_one dudect_p256_ecdsa  || fail=1
 run_one dudect_p384_ecdsa  || fail=1

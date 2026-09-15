@@ -10,7 +10,9 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 
 - TLS 1.3 client and server: full handshake, HelloRetryRequest, PSK
   resumption (`psk_dhe_ke` only, forward secret), KeyUpdate, exporters,
-  mutual authentication, SNI-based identity selection.
+  mutual authentication, SNI-based identity selection, and a server-side
+  identity set (`Config.Identities`) chosen by the client's signature
+  algorithms, cipher-suite family, curves and certificate_authorities.
 - TLS 1.2 client and server: ECDHE suites only (RSA and ECDSA
   authentication), extended master secret, mutual authentication,
   RFC 5077 session-ticket resumption.
@@ -28,7 +30,12 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 - Certificate revocation: stapled OCSP (TLS 1.3 and 1.2) and
   application-supplied CRLs, evaluated for every certificate below the
   trust anchor, with `Ignore` / `Soft_Fail` / `Hard_Fail` policies and
-  RFC 7633 must-staple.
+  RFC 7633 must-staple. A `Verify_Staple` hook lets the application
+  apply its own OCSP policy on top.
+- OCSP stapling on the server: an identity carries its OCSP response
+  (`Set_OCSP_Staple` / `Credentials.Load_Staple`) and the server staples
+  it for clients that send `status_request`, as a TLS 1.3 CertificateEntry
+  extension or a TLS 1.2 CertificateStatus message.
 - Stateless session tickets on both versions: the resumption secret is
   sealed under a server ticket-encryption key (AES-256-GCM) and the
   ticket *is* the identity, so no server-side session store exists.
@@ -47,11 +54,31 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   run (`ci/prove.sh`) is the release gate and is expected to report only
   the handful of known findings in upstream SPARKNaCl and in
   RecordFlux-generated code.
-- Constant-time behaviour of the crypto kernels is checked with a
-  valgrind/ctgrind lane (`sparktlscrypto/ci/timing.sh ctgrind`) that
-  poisons secrets — and, for the signature verifiers, the attacker-
-  controlled inputs — and fails on any data-dependent branch or index.
-  A dudect statistical lane exists for local use.
+- Constant-time behaviour of the crypto kernels is checked in CI by
+  `ci/timing.sh all`: a valgrind/ctgrind lane that poisons secrets — and,
+  for the signature verifiers, the attacker-controlled inputs — and fails
+  on any data-dependent branch or index, plus a dudect statistical lane
+  run against the optimised build (so the AVX-512 and AES-NI paths that
+  valgrind cannot execute are covered). Both lanes carry a canary with a
+  planted leak that must be flagged, so a harness that loses sensitivity
+  fails the build rather than passing silently.
+- Conformance suites (2026-09-14): BoringSSL's BoGo runner passes
+  1464 of 1534 cases, with the 70 failures each documented in
+  `tests/bogo/EXPECTED_FAILURES.txt` and nothing left unimplemented (see
+  `tests/bogo/CLASSIFICATION.md` for the out-of-scope list); tlsfuzzer
+  runs 2600+ conversations across 90 scripts with every failing script
+  classified in `tests/protocol/run.sh`; TLS-Anvil passes 152 of the 199
+  tests its scan enables, with the 47 failures grouped and dispositioned
+  in `tests/tlsanvil/EXPECTED_FAILURES.txt`; x509-limbo 9752/9778 and
+  NIST PKITS 189/249 with the deviations listed under `tests/x509/`;
+  Wycheproof and NIST CAVP vectors pass in full. `tests/README.md`
+  describes every lane, its baseline file and how to reproduce one case.
+- The example programs and `sparktls_cli` are covered by the test lanes
+  (integration and `tests/cli`) and were reviewed for the failure modes
+  that get CVEs filed against sample code: path traversal, unbounded
+  reads, ignored short writes, missing timeouts, world-readable key
+  files, silently overwritten files, unverified CSRs and exit codes that
+  hide failures.
 
 ## Not Supported
 
@@ -68,7 +95,9 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 - **TLS 1.2 session-ID resumption** (tickets only) and **Ed25519 client
   authentication in TLS 1.2** (the client declines with an empty
   Certificate: PureEdDSA needs the raw transcript, which this stack does
-  not keep).
+  not keep). In TLS 1.2 an ECDSA key signs only with the hash of its own
+  curve (P-256 with SHA-256, P-384 with SHA-384), so a peer that offers
+  `ecdsa_secp256r1_sha256` alone cannot use a P-384 identity.
 - **Fetching revocation data.** The library never performs network I/O of
   its own: OCSP evidence arrives stapled from the server and CRLs are
   attached by the application.
@@ -76,6 +105,30 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   serialization. It tolerates unknown or reserved values where the TLS
   RFCs require extensibility, but does not intentionally emit reserved
   cipher suites, groups, signature schemes, versions, or extensions.
+
+## Session Lifecycle
+
+A session ends in one of two ways. `Close_Notify` is the orderly path: it
+queues the close_notify alert and the session keeps being driven through
+`Advance` until the peer has answered, at which point the handshake slot is
+freed. `Drop` is the other one: the transport died, a timeout fired, or the
+application is done with the connection. It scrubs every key and handshake
+secret and frees the slot without touching the wire, and it is safe and
+idempotent in every state. Call it on every path that stops driving a
+session; a server that forgets does not answer anyone once `Max_Inflight`
+(16) peers have disconnected mid-handshake, which scanners and browsers'
+speculative connections do routinely. Close_Notify only has meaning once the
+handshake is complete, and a peer that never answers it is finished with
+`Drop` as well.
+
+Neither is a callback. The library never calls the application about a
+session's lifetime; everything it has to say arrives as the `Action` that
+`Advance` returns (`Has_Output`, `Need_Input`, `Handshake_Done`,
+`Plaintext_Ready`, `Error_Alert`, `Shutdown`), and the application drives
+the socket. The only callbacks are the hooks the application installs in
+`Config`: the random source, the clock, the peer-verification veto, the
+client-identity selector, the OCSP-staple policy hooks and the ticket-key
+ring accessors.
 
 ## Session Ticket Policy
 
@@ -124,14 +177,15 @@ sent. The known x509-limbo and PKITS deviations are listed in
 
 ## Known Issues
 
-- The realworld matrix (`tests/realworld/run.sh`) lists two known
-  deviations: `extended-validation.badssl.com` (certificate rejected) and
-  `revoked.badssl.com` (accepted, because no revocation evidence is
-  available without fetching).
+- None open in the realworld matrix (`tests/realworld/run.sh`). Note that
+  `revoked.badssl.com` is only refused when the runner attaches the
+  issuer's CRL: the library never fetches revocation data, so without a
+  stapled OCSP response or an application-supplied CRL a revoked leaf is
+  accepted under the default `Soft_Fail` policy, exactly as curl accepts
+  it. Use `Hard_Fail` where that is unacceptable.
 
 ## Planned Work
 
-- Full BoGo coverage: Make currently unimplemented cases run, with an explicit list of out-of-scope features.
 - TLS-Anvil and tlsfuzzer conformance runs with documented intentional gaps.
 - Post-quantum key exchange: the `X25519MLKEM768` hybrid, built on the
   SPARK ML-KEM implementation. Today the stack *tolerates* PQ peers

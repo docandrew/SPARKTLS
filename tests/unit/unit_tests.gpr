@@ -41,7 +41,8 @@ project Unit_Tests is
                  "test_tek_rotation.adb",
                  "test_validation_config.adb",
                  "test_tls12_ecdsa.adb",
-                 "test_exporter.adb");
+                 "test_exporter.adb",
+                 "test_ocsp_staple.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnatp");
