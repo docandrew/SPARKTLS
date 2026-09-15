@@ -27,7 +27,7 @@ PARENT="$(dirname "$ROOT")"
 # Pins as of 2026-09-15. Override with the environment variable to test
 # against a different revision (e.g. SPARKTLSCRYPTO_REF=master).
 SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
-SPARKX509_REF="${SPARKX509_REF:-e9db6cd95d9731857bb1c9276f3ce9f4514ac747}"   # master 2026-09-14, PR #6
+SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
 SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-4610f08961d5424d7f5d906b259733ccd3712066}"   # master 2026-09-14, PR #7
