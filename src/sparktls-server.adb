@@ -1313,14 +1313,25 @@ is
    procedure Close_Notify (S : in out Session) is
       Ignored_Alert_Out : N32;
    begin
-      --  The session may already be fully closed: Advance zeroes the
-      --  traffic keys and sets Closed once BOTH directions have closed
-      --  (RFC 8446 6.1). It reports that with the same Shutdown result it
-      --  uses for a half-duplex close, so an application cannot tell the
-      --  two apart and will reasonably call us in either case. Encrypting
-      --  here would build an alert under the all-zero scrubbed key and
-      --  burn a sequence number on a dead session. Nothing to send.
-      if S.State not in Connected | Closing then
+      --  Only a Connected session has a close_notify left to send.
+      --
+      --  Closing means one is already on the wire: either this procedure
+      --  put it there, or a record handler answered the peer's close_notify
+      --  (every transition into Closing builds the reply first, in the
+      --  connected-state handlers of both versions and in the TLS 1.2
+      --  mid-handshake alert handler). RFC 8446 6.1 / RFC 5246 7.2.1 give
+      --  each side exactly one; until 2026-09 a call in Closing sent a
+      --  second, and after a mid-handshake close_notify on TLS 1.2 it was
+      --  "encrypted" under keys that did not exist yet (TLS-Anvil
+      --  AlertProtocol.closeNotify: "expected 1 warning alert, got 2").
+      --
+      --  Closed and Error: Advance zeroes the traffic keys once both
+      --  directions have closed and reports it with the same Shutdown
+      --  result it uses for a half-duplex close, so an application cannot
+      --  tell the two apart and will reasonably call us in either case.
+      --  Encrypting here would build an alert under the all-zero scrubbed
+      --  key and burn a sequence number on a dead session. Nothing to send.
+      if S.State /= Connected then
          return;
       end if;
       case S.Version is
@@ -1346,12 +1357,9 @@ is
          when TLS_Undetermined =>
             return;
       end case;
-      --  RFC 8446 6.1: at most one close_notify per peer; if we
-      --  already transitioned to Closing on a prior invocation, the
-      --  state-machine transition is a no-op.
-      if S.State = Connected then
-         Set_State (S, Closing);
-      end if;
+      --  RFC 8446 6.1: our one close_notify is out; the write side is now
+      --  closed and a later call finds Closing and sends nothing.
+      Set_State (S, Closing);
    end Close_Notify;
 
 end SPARKTLS.Server;

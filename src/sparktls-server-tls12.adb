@@ -1472,23 +1472,14 @@ is
                Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
                if not Parse_OK then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error
-                    (S,
-                     (if Frag (Frag'First)
-                         in 16#01#
-                          | 16#02#
-                          | 16#04#
-                          | 16#08#
-                          | 16#0B#
-                          | 16#0C#
-                          | 16#0D#
-                          | 16#0E#
-                          | 16#0F#
-                          | 16#10#
-                          | 16#14#
-                      then Decode_Error
-                      else Unexpected_Message),
-                     Result);
+                  --  RFC 5246 7.4 / 7.2.2: any handshake-content record here
+                  --  is out of sequence (ClientKeyExchange is in, the
+                  --  ChangeCipherSpec is not), so it is unexpected_message
+                  --  whatever its bytes look like. Until 2026-09 the alert
+                  --  depended on the first byte resembling a handshake type,
+                  --  which made an encrypted Finished sent without CCS
+                  --  (tlsfuzzer message-skipping) draw decode_error at random.
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
                   return;
                end if;
 
@@ -1533,10 +1524,19 @@ is
        and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
    is
       CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+      --  RFC 5246 7.3: the client's ChangeCipherSpec follows its
+      --  ClientKeyExchange (and CertificateVerify when it sent a signing
+      --  certificate); on an abbreviated handshake it follows our Finished
+      --  directly. A CCS before those messages is out of sequence:
+      --  unexpected_message (RFC 5246 7.2.2). Until 2026-09 it was accepted
+      --  and the handshake failed later, on the undecryptable Finished
+      --  (tlsfuzzer message-skipping "skip Client Key Exchange").
       CCS_OK  : constant Boolean :=
         Rec.Fragment_Len = 1
         and then S.Input.Storage (Ix (CCS_Pos)) = 16#01#
-        and then not S.HC.CCS_Received;
+        and then not S.HC.CCS_Received
+        and then S.State = Wait_Client_Finished
+        and then (S.HC.CKE_Received_12 or else S.HC.T12.Resuming);
    begin
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       if CCS_OK then
@@ -1938,6 +1938,13 @@ is
             Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
             Send_Alert_And_Error (S, Record_Overflow, Result);
+         elsif Rec.Record_Len > 0 then
+            --  A complete record with an undefined content type (RFC 5246
+            --  6.2.1: ContentType is one of 20..23). Waiting for more input
+            --  here left the record unread and the connection hanging
+            --  (TLS-Anvil sendNotDefinedRecordTypesWithCCSAndFinished).
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
          else
             Result := Need_Input;
          end if;
@@ -2072,6 +2079,13 @@ is
             Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
             Send_Alert_And_Error (S, Record_Overflow, Result);
+         elsif Rec.Record_Len > 0 then
+            --  A complete record with an undefined content type (RFC 5246
+            --  6.2.1: ContentType is one of 20..23). Waiting for more input
+            --  here left the record unread and the connection hanging
+            --  (TLS-Anvil sendNotDefinedRecordTypesWithCCSAndFinished).
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
          else
             Result := Need_Input;
          end if;
@@ -2256,6 +2270,16 @@ is
             return;
          end if;
 
+         --  RFC 5246 7.4.8 / RFC 8446 4.4.3: the algorithm MUST be one we
+         --  offered in CertificateRequest. A code point we do not represent
+         --  at all (Scheme_None: unassigned, or SHA-1) can never have been
+         --  offered: illegal_parameter, not a signature failure. Until
+         --  2026-09 it fell through to verification and drew decrypt_error
+         --  when no explicit Verify_Sig_Algos list was configured.
+         if Scheme = Scheme_None then
+            Send_Alert_And_Error (S, Illegal_Parameter, Result);
+            return;
+         end if;
          --  Ed25519 CertificateVerify in TLS 1.2 signs the raw handshake
          --  transcript, which the streaming transcript cannot replay, so
          --  the scheme is not one we can verify here: illegal_parameter,
@@ -2638,6 +2662,13 @@ is
             Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
             Send_Alert_And_Error (S, Record_Overflow, Result);
+         elsif Rec.Record_Len > 0 then
+            --  A complete record with an undefined content type (RFC 5246
+            --  6.2.1: ContentType is one of 20..23). Waiting for more input
+            --  here left the record unread and the connection hanging
+            --  (TLS-Anvil sendNotDefinedRecordTypesWithCCSAndFinished).
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
          else
             Result := Need_Input;
          end if;
@@ -2892,10 +2923,15 @@ is
 
       pragma Assert (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
 
-      --  TLS 1.2: CCS in Connected is ignored
+      --  RFC 5246 7.1: ChangeCipherSpec belongs to a handshake. After
+      --  Finished it is a state-machine violation whether it arrives in
+      --  plaintext or under the current keys: unexpected_message, as
+      --  BoringSSL and OpenSSL answer (TLS-Anvil
+      --  secondChangeCipherSpecAfterHandshake[Unencrypted]). Until
+      --  2026-09 it was silently dropped.
       if Rec.Content = Records.Content_Change_Cipher_Spec then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Result := OK;
+         Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
          return;
       end if;
 

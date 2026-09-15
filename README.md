@@ -49,6 +49,12 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 
 ## Verification Status
 
+`ATTACK_COVERAGE.md` lists every known TLS implementation attack class with
+the mechanism that closes it here and the test or proof that shows so, plus
+the behaviour differences documented as intentional and the features not
+implemented. It is the reference for what the numbers below do and do not
+claim.
+
 - Every unit in `sparktls`, `sparkx509` and `sparktlscrypto` discharges
   under `gnatprove --level=1` with no unproved checks; the whole-project
   run (`ci/prove.sh`) is the release gate and is expected to report only
@@ -67,9 +73,10 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   `tests/bogo/EXPECTED_FAILURES.txt` and nothing left unimplemented (see
   `tests/bogo/CLASSIFICATION.md` for the out-of-scope list); tlsfuzzer
   runs 2600+ conversations across 90 scripts with every failing script
-  classified in `tests/protocol/run.sh`; TLS-Anvil passes 152 of the 199
-  tests its scan enables, with the 47 failures grouped and dispositioned
-  in `tests/tlsanvil/EXPECTED_FAILURES.txt`; x509-limbo 9752/9778 and
+  classified in `tests/protocol/run.sh`; TLS-Anvil passes 181 of the 218
+  tests its scan enables, with the 37 failures grouped and dispositioned
+  in `tests/tlsanvil/EXPECTED_FAILURES.txt` (all three groups are documented
+  decisions, none an open bug); x509-limbo 9752/9778 and
   NIST PKITS 189/249 with the deviations listed under `tests/x509/`;
   Wycheproof and NIST CAVP vectors pass in full. `tests/README.md`
   describes every lane, its baseline file and how to reproduce one case.

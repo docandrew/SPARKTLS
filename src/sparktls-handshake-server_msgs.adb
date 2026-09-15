@@ -407,6 +407,7 @@ is
       X25519 : Boolean := False;
       P256   : Boolean := False;
       P384   : Boolean := False;
+      Shape_Bad : Boolean := False;
 
       procedure Scan (Data : RBT.Bytes);
 
@@ -418,9 +419,16 @@ is
             return;
          end if;
          List_Len := N32 (Data (Data'First)) * 256 + N32 (Data (Data'First + 1));
-         --  Pairs present in the body, then pairs the list declares, then the
-         --  DoS_Caps.Max_Supported_Groups cap; entries past it are dropped.
-         Pairs := N32'Min ((DLen - 2) / 2, (List_Len + 1) / 2);
+         --  RFC 8446 4.2.7: named_group_list<2..2^16-1> behind a 2-byte
+         --  length: even, non-empty and exactly filling the body. Until
+         --  2026-09 a list length disagreeing with the body was clamped to
+         --  whichever was shorter. Entries past DoS_Caps.Max_Supported_Groups
+         --  are still dropped.
+         if List_Len = 0 or else List_Len mod 2 /= 0 or else List_Len /= DLen - 2 then
+            Shape_Bad := True;
+            return;
+         end if;
+         Pairs := List_Len / 2;
          for I in 0 .. N32'Min (Pairs, Cap) - 1 loop
             declare
                P0  : constant RBT.Index := Data'First + RBT.Index (2 + 2 * I);
@@ -442,6 +450,10 @@ is
         RFLX.TLS_Handshake.CH_Extension_TLS.Generic_Get_Data (Process_Data => Scan);
    begin
       Get (Ext_Ctx);
+      if Shape_Bad then
+         HC.Ext_Parse_Err := Decode_Error;
+         return;
+      end if;
       if X25519 then
          HC.Client_Supports_X25519 := True;
       end if;
@@ -509,6 +521,13 @@ is
       end Check_At;
    begin
       HC.Saw_Supported_Versions := True;
+
+      --  RFC 8446 4.2.1: list_len is even, non-zero and exactly fills the
+      --  body (Data'Last is the body length minus the length byte).
+      if List_Len = 0 or else List_Len mod 2 /= 0 or else List_Len /= Data'Last then
+         HC.Ext_Parse_Err := Decode_Error;
+         return;
+      end if;
 
       if 2 <= Data'Last and then 1 < 1 + List_Len then
          Check_At (1);
@@ -787,11 +806,9 @@ is
       Age := 0;
       Status := PSK_Identity_Ignore;
 
-      if IDs_Len = 0 then
-         return;
-      end if;
-
-      if IDs_Len > DLen - 2 then
+      --  RFC 8446 4.2.11: identities<7..2^16-1>; an empty list, or one
+      --  that overruns the extension, is malformed: decode_error.
+      if IDs_Len = 0 or else IDs_Len > DLen - 2 then
          Status := PSK_Identity_Decode_Error;
          return;
       end if;
@@ -802,11 +819,19 @@ is
          IDs_Rem  : constant PSK_Ext_Index := IDs_End - P;
          Tick_Len : constant N32 := N32 (Ext_Data (P)) * 256 + N32 (Ext_Data (P + 1));
       begin
-         if IDs_Rem < 6
-           or else Tick_Len = 0
-           or else Tick_Len > N32 (Max_Ticket_Len)
-           or else Tick_Len > IDs_Rem - 6
-         then
+         --  RFC 8446 4.2.11: identity<1..2^16-1> plus the 4-byte
+         --  obfuscated_ticket_age must fit inside identities_len. An
+         --  identity that overruns the list is malformed: decode_error
+         --  (TLS-Anvil preSharedKeyExtensionIdentityListLength shortens
+         --  the list by one). Until 2026-09 this fell through to Ignore
+         --  and the server silently ran a full handshake instead.
+         if IDs_Rem < 6 or else Tick_Len = 0 or else Tick_Len > IDs_Rem - 6 then
+            Status := PSK_Identity_Decode_Error;
+            return;
+         end if;
+         --  Well-formed but longer than any ticket we issue: not ours,
+         --  ignore the offer (the server may decline any identity).
+         if Tick_Len > N32 (Max_Ticket_Len) then
             return;
          end if;
 
@@ -1876,8 +1901,19 @@ is
 
          when RFLX.Tls_Extensiontype_Values.Supported_Groups =>
             HC.Client_Saw_Supported_Groups := True;
-            if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
+            --  RFC 8446 4.2.7: at least one 2-byte group behind the 2-byte
+            --  list length, so a body under 4 bytes is malformed
+            --  (decode_error). Bodies over Wire_Small_Ext_Len (512 bytes,
+            --  255 groups) are well-formed but beyond the DoS bound; they
+            --  are left unparsed, which ends in handshake_failure for want
+            --  of a common group.
+            if DLen < 4 then
+               OK := False;
+            elsif DLen in Wire_Small_Ext_Len then
                Parse_Supported_Groups_Extension (Ext_Ctx, DLen, HC);
+               if HC.Ext_Parse_Err /= No_Error then
+                  OK := False;
+               end if;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Pre_Shared_Key =>
@@ -1892,7 +1928,15 @@ is
             --  abbreviated handshake). Before stateless tickets this was
             --  masked: 1.3 identities were 16-byte hash ids, so the longer
             --  1.2 ticket was rejected by the identity-length cap.
-            if HC.Has_TLS_1_3 and then DLen in Wire_PSK_Ext_Len then
+            --  RFC 8446 4.2.11: identities<7..2^16-1> plus binders<33..2^16-1>
+            --  never fit in fewer than Wire_PSK_Ext_Len'First bytes, so a
+            --  shorter body from a TLS 1.3 client is malformed: decode_error.
+            --  Bodies above the bound (multi-identity offers) are declined,
+            --  which RFC 8446 4.2.11 permits; the handshake continues
+            --  without the PSK.
+            if HC.Has_TLS_1_3 and then DLen < Wire_PSK_Ext_Len'First then
+               OK := False;
+            elsif HC.Has_TLS_1_3 and then DLen in Wire_PSK_Ext_Len then
                Parse_PSK_Extension (Ext_Ctx, DLen, HC);
                --  RFC 8446 4.2.11: PSK shape errors (missing
                --  binders, identity/binder count mismatch,
@@ -1907,8 +1951,18 @@ is
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Supported_Versions =>
-            if DLen in Wire_Small_Ext_Len and then DLen >= 3 then
+            --  RFC 8446 4.2.1: versions<2..254> behind a 1-byte length, so
+            --  the body is 3 .. 255 bytes; a list length that does not tile
+            --  the body is caught inside. Either is decode_error (TLS-Anvil
+            --  supportedVersionsListLength). Until 2026-09 an ill-formed
+            --  body was skipped and negotiation fell back to TLS 1.2.
+            if DLen not in 3 .. 255 then
+               OK := False;
+            else
                Parse_Supported_Versions_Extension (Ext_Ctx, DLen, HC);
+               if HC.Ext_Parse_Err /= No_Error then
+                  OK := False;
+               end if;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Application_Layer_Protocol_Negotiation =>
@@ -1956,6 +2010,9 @@ is
          when RFLX.Tls_Extensiontype_Values.Extended_Master_Secret =>
             Dispatch_CH_State_Simple_Extension (Tag, DLen, Ext_Ctx, HC, OK);
 
+         when RFLX.Tls_Extensiontype_Values.Encrypt_Then_Mac =>
+            Dispatch_CH_State_Simple_Extension (Tag, DLen, Ext_Ctx, HC, OK);
+
          when others =>
             Dispatch_CH_State_Validation_Extension (Tag, DLen, Ext_Ctx, HC, OK);
       end case;
@@ -1978,6 +2035,9 @@ is
          when RFLX.Tls_Extensiontype_Values.Extended_Master_Secret =>
             Dispatch_CH_State_Flag_Extension (Tag, DLen, Ext_Ctx, HC, OK);
 
+         when RFLX.Tls_Extensiontype_Values.Encrypt_Then_Mac =>
+            Dispatch_CH_State_Flag_Extension (Tag, DLen, Ext_Ctx, HC, OK);
+
          when others =>
             Dispatch_CH_State_Data_Extension (Tag, DLen, Ext_Ctx, HC, OK);
       end case;
@@ -1990,24 +2050,58 @@ is
       HC      : in out Handshake_Context;
       OK      : out Boolean)
    is
-      pragma Unreferenced (Ext_Ctx);
    begin
       OK := True;
       case Tag.Enum is
          when RFLX.Tls_Extensiontype_Values.Renegotiation_Info =>
-            --  RFC 5746: client offered the renegotiation_info
-            --  extension. We echo it in ServerHello only when this
-            --  flag (or the SCSV signal) is set.
-            HC.Saw_Reneg_Info := True;
+            --  RFC 5746 3.2: extension_data is renegotiated_connection
+            --  <0..255>, a 1-byte length plus that many bytes, so the
+            --  body is 1 + n bytes. In an initial handshake n MUST be 0
+            --  (RFC 5746 3.6); a client sending a non-empty value
+            --  believes it is renegotiating and the server MUST abort
+            --  (handshake_failure, as BoringSSL does). A body the inner
+            --  length does not tile is decode_error (TLS-Anvil
+            --  renegotiationExtensionInfoLength adds 1 to the inner
+            --  length). We echo the extension in ServerHello only when
+            --  Saw_Reneg_Info (or the SCSV signal) is set.
+            if DLen not in 1 .. 256 then
+               OK := False;
+            else
+               declare
+                  ED : RBT.Bytes (1 .. RBT.Index (DLen));
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
+                  if N32 (ED (1)) /= DLen - 1 then
+                     OK := False;
+                  elsif DLen /= 1 then
+                     HC.Ext_Parse_Err := Handshake_Failure;
+                     OK := False;
+                  else
+                     HC.Saw_Reneg_Info := True;
+                  end if;
+               end;
+            end if;
 
          when RFLX.Tls_Extensiontype_Values.Early_Data =>
             --  RFC 8446 4.2.10: presence (empty body) in CH means
             --  the client wants to send 0-RTT data. Server decides
             --  acceptance later (Build_Server_Flight) when the PSK
             --  resume + DHE_KE + ticket-most-recent conditions are
-            --  evaluated; here we just record the offer.
+            --  evaluated; here we just record the offer. A non-empty
+            --  body is malformed: decode_error.
             if DLen = 0 then
                HC.Early_Data_Offered := True;
+            else
+               OK := False;
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Encrypt_Then_Mac =>
+            --  RFC 7366 2: extension_data is empty. We negotiate no CBC
+            --  suite, so the flag itself is never used, but a body is
+            --  still malformed: decode_error (TLS-Anvil
+            --  encryptThenMacExtensionLength adds a byte).
+            if DLen /= 0 then
+               OK := False;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Extended_Master_Secret =>
@@ -2022,6 +2116,9 @@ is
             --  combinations).
             if DLen = 0 then
                HC.Use_EMS := True;
+            else
+               --  RFC 7627 5.1: extension_data MUST be empty.
+               OK := False;
             end if;
 
          when others =>
@@ -2067,14 +2164,24 @@ is
             --  this connection (BoGo TLS13-ExpectNoSessionTicketOn
             --  BadKEMode-Server).
             HC.PSK.Saw_KE_Modes := True;
-            if DLen >= 2 then
+            --  RFC 8446 4.2.9: ke_modes<1..255> behind a 1-byte length: the
+            --  body is 2 .. 256 bytes and list_len fills it exactly.
+            --  Otherwise decode_error (TLS-Anvil
+            --  pskKeyExchangeModesExtension[List]Length).
+            if DLen not in 2 .. 256 then
+               OK := False;
+            else
                declare
                   ED       : RBT.Bytes (1 .. RBT.Index (DLen));
                   Ext_Data : Byte_Seq (0 .. DLen - 1);
                begin
                   RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
-                  Parse_PSK_Key_Exchange_Modes_Data (Ext_Data, HC.PSK.Has_DHE_KE);
+                  if N32 (Ext_Data (0)) /= DLen - 1 then
+                     OK := False;
+                  else
+                     Parse_PSK_Key_Exchange_Modes_Data (Ext_Data, HC.PSK.Has_DHE_KE);
+                  end if;
                end;
             end if;
 
@@ -2122,14 +2229,24 @@ is
             --  deprecated and MUST NOT be supported. We delegate to
             --  EC_Point_Formats_Acceptable, whose Post is formally
             --  proven by SPARK to match the RFC exactly.
-            if DLen >= 2 and then DLen in Wire_Small_Ext_Len then
+            --  RFC 8422 5.1.2: ec_point_format_list<1..2^8-1> behind a
+            --  1-byte length: the body is 2 .. 256 bytes and the list
+            --  length fills it exactly, else decode_error (TLS-Anvil
+            --  pointFormatExtensionFormatsLength).
+            if DLen not in 2 .. 256 then
+               OK := False;
+            else
                declare
                   ED       : RBT.Bytes (1 .. RBT.Index (DLen));
                   Ext_Data : Byte_Seq (0 .. DLen - 1);
                begin
                   RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
-                  Parse_EC_Point_Formats_Data (Ext_Data, OK);
+                  if N32 (Ext_Data (0)) /= DLen - 1 then
+                     OK := False;
+                  else
+                     Parse_EC_Point_Formats_Data (Ext_Data, OK);
+                  end if;
                end;
             end if;
 
@@ -2139,7 +2256,10 @@ is
             --    each algorithm = u16, so algorithms_len must be even
             --    and 2..254. Validate the length AND reject duplicate
             --    algorithm IDs (BoGo DuplicateCertCompressionExt).
-            if DLen >= 1 and then DLen in Wire_Small_Ext_Len then
+            if DLen = 0 then
+               --  RFC 8879 3: algorithms<2..2^8-2>; an empty body is malformed.
+               OK := False;
+            elsif DLen in Wire_Small_Ext_Len then
                declare
                   ED       : RBT.Bytes (1 .. RBT.Index (DLen));
                   Ext_Data : Byte_Seq (0 .. DLen - 1);
@@ -2333,6 +2453,20 @@ is
             end;
          end loop;
 
+         --  RFC 8446 4.1.2 / 4.2: the extension list must tile its declared
+         --  length exactly. RFLX records a violation for us: Update marks the
+         --  sequence invalid the moment an element fails Well_Formed_Message
+         --  (a declared length overrunning the block, a truncated header in
+         --  the trailing bytes), and Has_Element then ends the loop. Until
+         --  2026-09 nothing looked at that, so the walker just stopped: on a
+         --  TLS 1.3 ClientHello it never reached key_share and the server
+         --  answered HelloRetryRequest (TLS-Anvil *ExtensionLength*,
+         --  *ListLength*, paddingExtensionLength). RFC 8446 6.2: decode_error,
+         --  the default the caller applies when OK is False.
+         if not RFLX.TLS_Handshake.CH_Extensions_TLS.Valid (Exts_Ctx) then
+            Aborting := True;
+         end if;
+
          Update_Extensions_TLS (Ctx, Exts_Ctx);
          pragma Unreferenced (Exts_Ctx);
       end;
@@ -2417,6 +2551,17 @@ is
          --  order; selecting from the first N still picks the best
          --  mutual suite for any legitimate client.
 
+         --  RFC 8446 4.1.2 / RFC 5246 7.4.1.2: cipher_suites<2..2^16-2> is a
+         --  whole number of 2-byte suites. A trailing odd byte leaves the RFLX
+         --  sequence invalid (see Parse_CH_Extensions); clear the negotiation
+         --  so the caller takes its no-suite exit with Last_Err = decode_error.
+         --  Until 2026-09 the stray byte was silently ignored.
+         if not RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid (Suites_Ctx) then
+            Negotiated    := Suite_None;
+            Negotiated_12 := Suite_None;
+            Last_Err      := Decode_Error;
+         end if;
+
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;
    end Parse_CH_Cipher_Suites;
@@ -2440,6 +2585,19 @@ is
    begin
       Version := TLS_Undetermined;
       OK := False;
+
+      --  RFC 8446 6: a handshake message of an inappropriate type for
+      --  the current state is unexpected_message, not decode_error, and
+      --  that verdict comes before any size check: a 16-byte Finished
+      --  sent as the first message is a wrong message, not a short
+      --  ClientHello (tlsfuzzer message-skipping "skip all but
+      --  Finished"; until 2026-09 the 39-byte floor below fired first).
+      --  The type byte is there whenever the reassembled header is.
+      if Data'Length >= 4 and then Data (Data'First) /= HS_Msg_Wire (HT_Client_Hello) then
+         Last_Err := Unexpected_Message;
+         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+         return;
+      end if;
 
       if Data'Length < 39 then
          Last_Err := Decode_Error;
@@ -2553,9 +2711,25 @@ is
                      P := P + 2 + Cs_Len;
                      if P + 1 <= Data'Last then
                         Cm_Len := N32 (Data (P));
-                        if Cm_Len /= 1 or else (P + 1 <= Data'Last and then Data (P + 1) /= 0) then
-                           OK := True;  --  found bad compression
-
+                        --  Only a compression list that is structurally
+                        --  present (non-empty and inside the body) can be
+                        --  judged on its contents: no null method is
+                        --  illegal_parameter (RFC 8446 4.1.2). An empty
+                        --  list or one that overruns the body is a length
+                        --  fault, decode_error (RFC 5246 7.4.1.2
+                        --  compression_methods<1..2^8-1>; tlsfuzzer
+                        --  invalid-client-hello fuzzes this length).
+                        if Cm_Len in 1 .. 255
+                          and then P + 1 + Cm_Len <= Data'Last + 1
+                        then
+                           OK := True;  --  list present: judge its bytes
+                           for I in N32 range 1 .. Cm_Len loop
+                              pragma Loop_Invariant (P + 1 + Cm_Len <= Data'Last + 1);
+                              if Data (P + I) = 0 then
+                                 OK := False;  --  null present: not this fault
+                                 exit;
+                              end if;
+                           end loop;
                         end if;
                      end if;
                   end if;
@@ -2620,8 +2794,18 @@ is
          Parse_CH_Cipher_Suites (Ctx, Negotiated, Negotiated_12, Last_Err, HC);
       end if;
 
-      --  Need at least one matching suite (either TLS 1.3 or 1.2)
-      if Negotiated = Suite_None and Negotiated_12 = Suite_None then
+      --  A malformed suite list (odd trailing byte: Last_Err = Decode_Error
+      --  from Parse_CH_Cipher_Suites) is refused here. A merely empty
+      --  match is NOT: RFC 8446 4.2.1 and RFC 5246 E.1 put the version
+      --  decision first (a client offering only versions we do not speak
+      --  gets protocol_version whatever its suites), so the extensions are
+      --  parsed and the version settled below before the suite checks
+      --  answer handshake_failure. Until 2026-09 this exit fired for any
+      --  empty match and pre-1.2 clients drew handshake_failure (tlsfuzzer
+      --  version-negotiation, version-numbers, downgrade-protection).
+      if (Negotiated = Suite_None and Negotiated_12 = Suite_None)
+        and then Last_Err = Decode_Error
+      then
          Take_Buffer (Ctx, Buf);
          SPARKTLS.RFLX_Borrow.Discard (Buf);
 
@@ -2754,6 +2938,10 @@ is
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
+      --  A TLS 1.2 negotiation with no TLS 1.2 suite is left to the caller
+      --  (Complete_Client_Hello answers handshake_failure, RFC 5246
+      --  7.4.1.2): the parse contract is "message understood, candidates
+      --  reported", and the unit tests rely on it.
 
       --  RFC 8446 4.2.9: a TLS 1.3 ClientHello with pre_shared_key MUST
       --  also include psk_key_exchange_modes; without it the server MUST

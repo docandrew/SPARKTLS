@@ -801,9 +801,13 @@ is
             --  signature_algorithms. The TLS 1.3 CertificateVerify path
             --  already checks Cfg.Verify_Sig_Algos; mirror it here
             --  so a disabled algorithm cannot authenticate the ECDHE params.
-            if HC.Cfg.Verify_Sig_Algo_Count > 0
-              and then not Sig_Scheme_In_List
-                             (Sig_Scheme, HC.Cfg.Verify_Sig_Algos, HC.Cfg.Verify_Sig_Algo_Count)
+            --  A code point we do not represent (Scheme_None: unassigned or
+            --  SHA-1) can never have been in our signature_algorithms:
+            --  illegal_parameter (RFC 5246 7.4.3), not a signature failure.
+            if Sig_Scheme = Scheme_None
+              or else (HC.Cfg.Verify_Sig_Algo_Count > 0
+                       and then not Sig_Scheme_In_List
+                                      (Sig_Scheme, HC.Cfg.Verify_Sig_Algos, HC.Cfg.Verify_Sig_Algo_Count))
             then
                HC.Ext_Parse_Err := Illegal_Parameter;
                SKE.Take_Buffer (Ctx, Buf);

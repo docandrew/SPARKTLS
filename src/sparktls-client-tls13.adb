@@ -583,6 +583,14 @@ is
                   EE_Seq.Update (Exts, E);
                end;
             end loop;
+            --  RFC 8446 4.3.1 / 6.2: the extension list must tile its
+            --  declared length; RFLX marks the sequence invalid on a
+            --  malformed element and the loop above simply ends. Until
+            --  2026-09 that was accepted; the server-side walker got the
+            --  same check the same day (TLS-Anvil family C).
+            if Pol_Err = No_Error and then not EE_Seq.Valid (Exts) then
+               Pol_Err := Decode_Error;
+            end if;
             EE.Update_Extensions (Ctx, Exts);
          end;
       end if;
@@ -918,6 +926,11 @@ is
                   CR_Seq.Update (Exts, E);
                end;
             end loop;
+            --  RFC 8446 4.3.2: as for EncryptedExtensions, a malformed
+            --  extension element is decode_error, not silence.
+            if Fail_Err = No_Error and then not CR_Seq.Valid (Exts) then
+               Fail_Err := Decode_Error;
+            end if;
             CR_M.Update_Extensions (Ctx, Exts);
          end;
       end if;
@@ -1343,6 +1356,14 @@ is
                   Sig_Len    : constant N32 := N32 (Data (6)) * 256 + N32 (Data (7));
                   Sig_Start  : constant N32 := 8;
                begin
+                  --  RFC 8446 4.4.3: the algorithm MUST be one we offered
+                  --  in signature_algorithms; a code point we do not
+                  --  represent (Scheme_None) never was: illegal_parameter,
+                  --  not a signature failure (2026-09; mirrors the server).
+                  if Sig_Scheme = Scheme_None then
+                     Send_HS_Encrypted_Alert (S, D, Illegal_Parameter, Result);
+                     return;
+                  end if;
                   if Sig_Scheme in
                        Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512
                   then
@@ -2635,7 +2656,17 @@ is
       end if;
 
       if not Rec.OK then
-         Result := Need_Input;
+         --  RFC 8446 5.1: a complete record with an undefined content type
+         --  is unexpected_message (Bad_Version and Overflow were handled
+         --  above). Waiting for more input here left the record unread and
+         --  the client hanging, the twin of the server-side gap TLS-Anvil
+         --  found (2026-09).
+         if Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -2895,6 +2926,11 @@ is
                            NST_Seq.Update (Exts, E);
                         end;
                      end loop;
+                     --  RFC 8446 4.6.1: a malformed extension element in
+                     --  NewSessionTicket is decode_error (Bad), not silence.
+                     if not NST_Seq.Valid (Exts) then
+                        Bad := True;
+                     end if;
                      NST_M.Update_Extensions (Ctx, Exts);
                   end;
                end if;
@@ -3239,7 +3275,11 @@ is
                --  during shutdown leaves us unable to decrypt the
                --  close_notify we are waiting for (BoGo
                --  Shutdown-Shim-KeyUpdate).
-               if S.State in Connected | Closing then
+               if Plain_Len = 0 then
+                  --  RFC 8446 5.4: zero-length Handshake content MUST be
+                  --  answered with unexpected_message.
+                  Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif S.State in Connected | Closing then
                   Process_Post_HS_Handshake_Bytes (S, Plaintext, Plain_Len, Result);
                else
                   Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
@@ -3253,7 +3293,11 @@ is
                --  value (e.g. BoGo SendBogusAlertType: level 0x42)
                --  is a protocol violation  we MUST reply with a
                --  fatal illegal_parameter alert (47).
-               if Plain_Len < 2 then
+               if Plain_Len = 0 then
+                  --  RFC 8446 5.4: zero-length Alert content is
+                  --  unexpected_message; a 1-byte alert is truncated.
+                  Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif Plain_Len < 2 then
                   --  Truncated alert.
                   Send_App_Encrypted_Alert (S, Decode_Error, Result);
                elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
@@ -3373,7 +3417,17 @@ is
       end if;
 
       if not Rec.OK then
-         Result := Need_Input;
+         --  RFC 8446 5.1: a complete record with an undefined content type
+         --  is unexpected_message (Bad_Version and Overflow were handled
+         --  above). Waiting for more input here left the record unread and
+         --  the client hanging, the twin of the server-side gap TLS-Anvil
+         --  found (2026-09).
+         if Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
