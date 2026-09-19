@@ -16,7 +16,9 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 - TLS 1.2 client and server: ECDHE suites only (RSA and ECDSA
   authentication), extended master secret, mutual authentication,
   RFC 5077 session-ticket resumption.
-- Key exchange: X25519, secp256r1 (P-256), secp384r1 (P-384).
+- Key exchange: X25519, secp256r1 (P-256), secp384r1 (P-384), and the
+  post-quantum hybrid X25519MLKEM768 (TLS 1.3, on by default; ML-KEM-768
+  from the `sparkmlkem` crate, itself derived from AWS LibFormalPQC).
 - Cipher suites: ChaCha20-Poly1305-SHA256, AES-128-GCM-SHA256,
   AES-256-GCM-SHA384.
 - Signatures: Ed25519, ECDSA P-256/P-384, RSA-PSS and RSA-PKCS#1 v1.5
@@ -194,10 +196,10 @@ sent. The known x509-limbo and PKITS deviations are listed in
 ## Planned Work
 
 - TLS-Anvil and tlsfuzzer conformance runs with documented intentional gaps.
-- Post-quantum key exchange: the `X25519MLKEM768` hybrid, built on the
-  SPARK ML-KEM implementation. Today the stack *tolerates* PQ peers
-  (ClientHellos carrying 1220-byte hybrid shares parse) but negotiates
-  only classical groups.
+- Post-quantum: the `X25519MLKEM768` hybrid key exchange is implemented
+  (TLS 1.3, on by default). Pure ML-KEM groups (MLKEM768, MLKEM1024) and
+  ML-DSA certificates wait on the follow-on standards; the `sparkmlkem`
+  crate already instantiates ML-KEM-1024.
 
 ## Dependencies
 

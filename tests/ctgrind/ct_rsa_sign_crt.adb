@@ -20,6 +20,7 @@ with Ctgrind;
 --  (big-endian, left-padded to 256/128 bytes). The keys exist only in
 --  this test source and protect nothing.
 procedure Ct_RSA_Sign_CRT is
+   Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    K_N : constant Byte_Seq (0 .. 255) :=
      (
       16#AF#, 16#E1#, 16#93#, 16#8C#, 16#CD#, 16#80#, 16#C4#, 16#BC#, 16#60#, 16#22#, 16#0B#, 16#9A#,
@@ -156,6 +157,7 @@ begin
      (M_Hash => Byte_Seq (Hash), Hash_Len => 32,
       Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
       Modulus => K_N, Mod_Len => 256, Priv_Exp => D,
+      Blind => Blind16_Test,
       Salt => Byte_Seq (Salt), Signature => Sig, Sig_Len => Sig_Len, OK => OK,
       Pub_Exp => 65537, CRT => CRT);
    Ctgrind.Make_Defined (Sig'Address, Interfaces.C.size_t (Sig'Length));

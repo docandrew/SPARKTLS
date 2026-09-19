@@ -515,9 +515,11 @@ is
                 not (S.HC.Client_Has_X25519
                      or S.HC.Client_Has_P256
                      or S.HC.Client_Has_P384
+                     or S.HC.Client_Has_X25519MLKEM768
                      or S.HC.Client_Supports_X25519
                      or S.HC.Client_Supports_P256
-                     or S.HC.Client_Supports_P384)
+                     or S.HC.Client_Supports_P384
+                     or S.HC.Client_Supports_X25519MLKEM768)
             then
                if Want_12 and Eff_12 /= Suite_None then
                   S.Version := TLS_1_2;
@@ -920,11 +922,13 @@ is
                                  Client_Random               => S.HC.Client_Random,
                                  Server_Random               => S.HC.Server_Random,
                                  Client_Has_X25519           => S.HC.Client_Has_X25519,
+                                 Client_Has_X25519MLKEM768   => S.HC.Client_Has_X25519MLKEM768,
                                  Client_Has_P256             => S.HC.Client_Has_P256,
                                  Client_Has_P384             => S.HC.Client_Has_P384,
                                  Client_Saw_Key_Share        => S.HC.Client_Saw_Key_Share,
                                  Client_Saw_Supported_Groups => S.HC.Client_Saw_Supported_Groups,
                                  Client_Supports_X25519      => S.HC.Client_Supports_X25519,
+                                 Client_Supports_X25519MLKEM768 => S.HC.Client_Supports_X25519MLKEM768,
                                  Client_Supports_P256        => S.HC.Client_Supports_P256,
                                  Client_Supports_P384        => S.HC.Client_Supports_P384,
                                  Client_Wants_Staple        => S.HC.Client_Wants_Staple,
@@ -1102,11 +1106,13 @@ is
                            Client_Random               => S.HC.Client_Random,
                            Server_Random               => S.HC.Server_Random,
                            Client_Has_X25519           => S.HC.Client_Has_X25519,
+                           Client_Has_X25519MLKEM768   => S.HC.Client_Has_X25519MLKEM768,
                            Client_Has_P256             => S.HC.Client_Has_P256,
                            Client_Has_P384             => S.HC.Client_Has_P384,
                            Client_Saw_Key_Share        => S.HC.Client_Saw_Key_Share,
                            Client_Saw_Supported_Groups => S.HC.Client_Saw_Supported_Groups,
                            Client_Supports_X25519      => S.HC.Client_Supports_X25519,
+                           Client_Supports_X25519MLKEM768 => S.HC.Client_Supports_X25519MLKEM768,
                            Client_Supports_P256        => S.HC.Client_Supports_P256,
                            Client_Supports_P384        => S.HC.Client_Supports_P384,
                            Client_Wants_Staple        => S.HC.Client_Wants_Staple,

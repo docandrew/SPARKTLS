@@ -11,6 +11,7 @@ with SPARKTLS.Credentials;
 with SPARKTLSCrypto.RSA;
 
 procedure Bench_RSA is
+   Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    Id     : SPARKTLS.Identity;
    OK     : Boolean;
    S_It   : Positive := 20;
@@ -65,6 +66,7 @@ begin
             Mod_Len   => Id.RSA_Mod_Len,
             Priv_Exp  => Id.RSA_Priv_Exp,
             Salt      => Byte_Seq (Salt),
+            Blind     => Blind16_Test,
             Signature => Sig,
             Sig_Len   => Sig_Len,
             OK        => Sign_OK);
@@ -89,6 +91,7 @@ begin
                Mod_Len   => Id.RSA_Mod_Len,
                Priv_Exp  => Id.RSA_Priv_Exp,
                Salt      => Byte_Seq (Salt),
+               Blind     => Blind16_Test,
                Signature => Sig2,
                Sig_Len   => L2,
                OK        => Sign_OK,

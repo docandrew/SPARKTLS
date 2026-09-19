@@ -22,6 +22,7 @@ pragma Warnings (Off, "use clause for package");
 pragma Warnings (Off, "has no effect");
 
 procedure Test_Crypto is
+   Blind40_Test : constant Byte_Seq (0 .. 39) := (others => 16#7E#);   --  fixed blinding for tests
    Total : Natural := 0;
    Pass  : Natural := 0;
    Fail  : Natural := 0;
@@ -997,7 +998,7 @@ begin
       New_Line;
 
       --  Sign
-      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
+      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K, Blind40_Test, R_Out, S_Out, Sign_OK);
       Check ("P-256 Sign", Sign_OK);
       if Sign_OK then
          Put ("    r(0..5): ");
@@ -1043,7 +1044,7 @@ begin
             R2, S2 : ECDSA_Sig_Half;
             OK2 : Boolean;
          begin
-            SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K2, R2, S2, OK2);
+            SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K2, Blind40_Test, R2, S2, OK2);
             Check ("P-256 Sign (large K)", OK2);
             if OK2 then
                Put ("    R2: ");
@@ -1068,7 +1069,7 @@ begin
             R3, S3 : ECDSA_Sig_Half;
             OK3 : Boolean;
          begin
-            SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K3, R3, S3, OK3);
+            SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K3, Blind40_Test, R3, S3, OK3);
             Check ("P-256 Sign (med K)", OK3);
             if OK3 then
                Check ("P-256 Verify (med K)",

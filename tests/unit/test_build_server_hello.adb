@@ -96,7 +96,7 @@ procedure Test_Build_Server_Hello is
    procedure Test_X25519_Builds is
       S      : Server_Session;
       HC     : Handshake_Context;
-      Result : Byte_Seq (0 .. 511) := (others => 0);
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -136,7 +136,7 @@ procedure Test_Build_Server_Hello is
    procedure Test_Selected_Group is
       S      : Server_Session;
       HC     : Handshake_Context;
-      Result : Byte_Seq (0 .. 511) := (others => 0);
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -150,8 +150,8 @@ procedure Test_Build_Server_Hello is
    procedure Test_Buffer_Too_Small is
       S      : Server_Session;
       HC     : Handshake_Context;
-      --  Min by Pre is Max_Server_Hello = 256.
-      Result : Byte_Seq (0 .. 255) := (others => 16#FF#);
+      --  Min by Pre is Max_Server_Hello (1536 since X25519MLKEM768).
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 16#FF#);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -163,7 +163,7 @@ procedure Test_Build_Server_Hello is
    procedure Test_P256_Builds is
       S      : Server_Session;
       HC     : Handshake_Context;
-      Result : Byte_Seq (0 .. 511) := (others => 0);
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -187,7 +187,7 @@ procedure Test_Build_Server_Hello is
    procedure Test_P384_Builds is
       S      : Server_Session;
       HC     : Handshake_Context;
-      Result : Byte_Seq (0 .. 511) := (others => 0);
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -211,7 +211,7 @@ procedure Test_Build_Server_Hello is
    procedure Test_P256_Invalid_Peer_PK_Rejected is
       S      : Server_Session;
       HC     : Handshake_Context;
-      Result : Byte_Seq (0 .. 511) := (others => 0);
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -227,7 +227,7 @@ procedure Test_Build_Server_Hello is
    procedure Test_No_Common_Group is
       S      : Server_Session;
       HC     : Handshake_Context;
-      Result : Byte_Seq (0 .. 511) := (others => 0);
+      Result : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       Len    : N32;
    begin
       Init_Context (S, HC);
@@ -274,8 +274,8 @@ procedure Test_Build_Server_Hello is
    procedure Test_Idempotent_Two_Calls is
       S1, S2   : Server_Session;
       HC1, HC2 : Handshake_Context;
-      R1 : Byte_Seq (0 .. 511) := (others => 0);
-      R2 : Byte_Seq (0 .. 511) := (others => 0);
+      R1 : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
+      R2 : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       L1, L2 : N32;
    begin
       Init_Context (S1, HC1);

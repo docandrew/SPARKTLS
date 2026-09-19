@@ -10,6 +10,8 @@ with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with RFLX.RFLX_Types;
 
+with MLKEM;
+
 package body SPARKTLS.Handshake.Server_Msgs
   with SPARK_Mode => On
 is
@@ -155,6 +157,39 @@ is
       Present := True;
    end Copy_P384_KS;
 
+   --  X25519MLKEM768 client share: encapsulation key (1184) || X25519 pk
+   --  (32). The encapsulation key is checked (FIPS 203 7.2) when the
+   --  server encapsulates, not here: the share is only stored.
+   procedure Copy_Hybrid_KS
+     (Data    : in Byte_Seq;
+      Pos     : in N32;
+      Peer_EK : out Hybrid_MLKEM_EK;
+      Peer_PK : out Bytes_32;
+      Present : out Boolean)
+   with
+     Pre => Data'First = 0
+            and then Pos <= N32'Last - (4 + Hybrid_Client_Share_Len - 1)
+            and then Pos + (4 + Hybrid_Client_Share_Len - 1) <= Data'Last,
+     Post => Present;
+
+   procedure Copy_Hybrid_KS
+     (Data    : in Byte_Seq;
+      Pos     : in N32;
+      Peer_EK : out Hybrid_MLKEM_EK;
+      Peer_PK : out Bytes_32;
+      Present : out Boolean) is
+   begin
+      --  Indexed by Peer_EK'Range so flow analysis sees the whole out
+      --  parameter written (a converted index hides that).
+      for I in Peer_EK'Range loop
+         Peer_EK (I) := MLKEM.Byte (Data (Pos + 4 + N32 (I)));
+      end loop;
+      for I in N32 range 0 .. 31 loop
+         Peer_PK (I) := Data (Pos + 4 + 1184 + I);
+      end loop;
+      Present := True;
+   end Copy_Hybrid_KS;
+
    procedure Parse_KS_Data (Data : in Byte_Seq; HC : in out Handshake_Context) is
    begin
       if Data'Length < 2 then
@@ -231,6 +266,20 @@ is
                      end if;
                      pragma Assert (Pos + 100 <= Data'Last);
                      Copy_P384_KS (Data, Pos, HC.KE.P384_PK, HC.Client_Has_P384);
+                     Pos := Pos + 4 + KL;
+                  elsif Group = Group_X25519MLKEM768_Wire then
+                     if HC.Client_Has_X25519MLKEM768 then
+                        HC.Ext_Parse_Err := Illegal_Parameter;
+                        return;
+                     end if;
+                     if KL /= Hybrid_Client_Share_Len then
+                        HC.Ext_Parse_Err := Illegal_Parameter;
+                        return;
+                     end if;
+                     pragma Assert (Pos + 4 + Hybrid_Client_Share_Len - 1 <= Data'Last);
+                     Copy_Hybrid_KS
+                       (Data, Pos, HC.KE.Hybrid_Peer_EK, HC.KE.Hybrid_Peer_PK,
+                        HC.Client_Has_X25519MLKEM768);
                      Pos := Pos + 4 + KL;
                   else
                      Pos := Pos + 4 + KL;
@@ -407,6 +456,7 @@ is
       X25519 : Boolean := False;
       P256   : Boolean := False;
       P384   : Boolean := False;
+      Hybrid : Boolean := False;   --  X25519MLKEM768
       Shape_Bad : Boolean := False;
 
       procedure Scan (Data : RBT.Bytes);
@@ -441,6 +491,8 @@ is
                   P256 := True;
                elsif Grp = 16#0018# then
                   P384 := True;
+               elsif Grp = Group_X25519MLKEM768_Wire then
+                  Hybrid := True;
                end if;
             end;
          end loop;
@@ -462,6 +514,9 @@ is
       end if;
       if P384 then
          HC.Client_Supports_P384 := True;
+      end if;
+      if Hybrid then
+         HC.Client_Supports_X25519MLKEM768 := True;
       end if;
    end Parse_Supported_Groups_Extension;
 

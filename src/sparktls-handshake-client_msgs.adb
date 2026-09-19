@@ -18,6 +18,8 @@ with RFLX.TLS_Handshake.SH_Extension_TLS;
 with RFLX.TLS_Handshake.CH_Extensions_TLS;
 with RFLX.TLS_Handshake.CH_Extension_TLS;
 with RFLX.TLS_Handshake.Key_Share_SH;
+with MLKEM;
+with MLKEM.ML_KEM_768;
 with RFLX.TLS_Handshake.Key_Share_HRR;
 with RFLX.TLS_Handshake.Hello_Retry_Request;
 with RFLX.TLS_Handshake.HRR_Extensions_TLS;
@@ -614,16 +616,19 @@ is
 
    --  RFC 8422 5.1.1 supported_groups. Either the single group the server
    --  selected in an HRR, or the full offered set.
-   function Build_SG_Raw (Restrict : Boolean; Group : ECDHE_Group) return Byte_Seq
+   function Build_SG_Raw
+     (Restrict : Boolean; Group : ECDHE_Group; PQ : Boolean; PQ_First : Boolean) return Byte_Seq
    with
      Post =>
        Build_SG_Raw'Result'First = 0
-       and then Build_SG_Raw'Result'Last = (if Restrict then 3 else 7);
+       and then Build_SG_Raw'Result'Last = (if Restrict then 3 elsif PQ then 9 else 7);
 
-   function Build_SG_Raw (Restrict : Boolean; Group : ECDHE_Group) return Byte_Seq is
-      Count : constant N32 := (if Restrict then 1 else 3);
+   function Build_SG_Raw
+     (Restrict : Boolean; Group : ECDHE_Group; PQ : Boolean; PQ_First : Boolean) return Byte_Seq is
+      Count : constant N32 := (if Restrict then 1 elsif PQ then 4 else 3);
       Wire  : constant Unsigned_16 := ECDHE_Group_Wire (Group);
       R     : Byte_Seq (0 .. 1 + 2 * Count) := (others => 0);
+      P     : N32 := 2;
    begin
       R (0) := Byte ((2 * Count) / 256);
       R (1) := Byte ((2 * Count) mod 256);
@@ -631,12 +636,21 @@ is
          R (2) := Byte (Wire / 256);
          R (3) := Byte (Wire mod 256);
       else
-         R (2) := 16#00#;
-         R (3) := 16#1D#;  --  X25519
-         R (4) := 16#00#;
-         R (5) := 16#17#;  --  secp256r1
-         R (6) := 16#00#;
-         R (7) := 16#18#;  --  secp384r1
+         if PQ and then PQ_First then
+            R (P)     := Byte (Group_X25519MLKEM768_Wire / 256);
+            R (P + 1) := Byte (Group_X25519MLKEM768_Wire mod 256);
+            P := P + 2;
+         end if;
+         R (P)     := 16#00#;
+         R (P + 1) := 16#1D#;  --  X25519
+         R (P + 2) := 16#00#;
+         R (P + 3) := 16#17#;  --  secp256r1
+         R (P + 4) := 16#00#;
+         R (P + 5) := 16#18#;  --  secp384r1
+         if PQ and then not PQ_First then
+            R (P + 6) := Byte (Group_X25519MLKEM768_Wire / 256);
+            R (P + 7) := Byte (Group_X25519MLKEM768_Wire mod 256);
+         end if;
       end if;
       return R;
    end Build_SG_Raw;
@@ -712,21 +726,30 @@ is
    --  single-entry CH2 shape for the HRR-selected group; otherwise the
    --  single configured initial entry. KS_Raw'Length must match the
    --  entry accounting done by the caller (KS_Data_Len).
+   --  Dual selects the CH1 shape with post-quantum on: two entries,
+   --  X25519MLKEM768 then X25519 (the order the browsers send).
    procedure Fill_KS_Raw
      (Retry_Single : in Boolean;
       Retry_Group  : in Maybe_ECDHE_Group;
       Retry_Entry  : in N32;
       Init_Group   : in ECDHE_Group;
       Init_Entry   : in N32;
+      Dual         : in Boolean;
+      PQ_First     : in Boolean;
       PK_Bytes     : in Byte_Seq;
       P256_PK_Enc  : in Byte_Seq;
       P384_PK_Enc  : in Byte_Seq;
+      Hybrid_Share : in Byte_Seq;
       KS_Raw       : out Byte_Seq)
    is
       Retry_Group_A : constant Byte := Byte (ECDHE_Group_Wire (Retry_Group) / 256);
       Retry_Group_B : constant Byte := Byte (ECDHE_Group_Wire (Retry_Group) mod 256);
       Init_Group_A  : constant Byte := Byte (ECDHE_Group_Wire (Init_Group) / 256);
       Init_Group_B  : constant Byte := Byte (ECDHE_Group_Wire (Init_Group) mod 256);
+      Hybrid_A      : constant Byte := Byte (Group_X25519MLKEM768_Wire / 256);
+      Hybrid_B      : constant Byte := Byte (Group_X25519MLKEM768_Wire mod 256);
+      Hybrid_Len_A  : constant Byte := Byte (Hybrid_Client_Share_Len / 256);
+      Hybrid_Len_B  : constant Byte := Byte (Hybrid_Client_Share_Len mod 256);
    begin
       KS_Raw := (others => 0);
       if Retry_Single then
@@ -753,9 +776,35 @@ is
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#61#;
                KS_Raw (6 .. 102) := P384_PK_Enc;
+            when Group_X25519MLKEM768 =>
+               KS_Raw (2) := Hybrid_A;
+               KS_Raw (3) := Hybrid_B;
+               KS_Raw (4) := Hybrid_Len_A;
+               KS_Raw (5) := Hybrid_Len_B;
+               KS_Raw (6 .. 5 + Hybrid_Client_Share_Len) := Hybrid_Share;
             when Group_None =>
                null;
          end case;
+      elsif Dual then
+         --  CH1 with post-quantum: X25519MLKEM768 and X25519, in the
+         --  configured preference order.
+         declare
+            H : constant N32 := (if PQ_First then 2 else 2 + 36);
+            X : constant N32 := (if PQ_First then 6 + Hybrid_Client_Share_Len else 2);
+         begin
+            KS_Raw (0) := Byte ((4 + Hybrid_Client_Share_Len + 36) / 256);
+            KS_Raw (1) := Byte ((4 + Hybrid_Client_Share_Len + 36) mod 256);
+            KS_Raw (H)     := Hybrid_A;
+            KS_Raw (H + 1) := Hybrid_B;
+            KS_Raw (H + 2) := Hybrid_Len_A;
+            KS_Raw (H + 3) := Hybrid_Len_B;
+            KS_Raw (H + 4 .. H + 3 + Hybrid_Client_Share_Len) := Hybrid_Share;
+            KS_Raw (X)     := Byte (Group_X25519_Wire / 256);
+            KS_Raw (X + 1) := Byte (Group_X25519_Wire mod 256);
+            KS_Raw (X + 2) := 16#00#;
+            KS_Raw (X + 3) := 16#20#;
+            KS_Raw (X + 4 .. X + 35) := PK_Bytes;
+         end;
       else
          --  CH1 / cookie-only retry: single configured initial entry.
          KS_Raw (0) := Byte (Init_Entry / 256);
@@ -780,6 +829,12 @@ is
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#61#;
                KS_Raw (6 .. 102) := P384_PK_Enc;
+            when Group_X25519MLKEM768 =>
+               KS_Raw (2) := Hybrid_A;
+               KS_Raw (3) := Hybrid_B;
+               KS_Raw (4) := Hybrid_Len_A;
+               KS_Raw (5) := Hybrid_Len_B;
+               KS_Raw (6 .. 5 + Hybrid_Client_Share_Len) := Hybrid_Share;
          end case;
       end if;
    end Fill_KS_Raw;
@@ -789,15 +844,21 @@ is
    --  (CH2 after HRR) every value is REUSED from CH1 -- the server must
    --  recognise the share and the randoms must not change -- so only the
    --  public encodings are recomputed.
+   --  Need_Hybrid: also generate (or, in retry mode, re-encode) the
+   --  X25519MLKEM768 material: an ML-KEM-768 key pair and an X25519 key
+   --  pair of its own. Hybrid_Share receives the client share
+   --  (encapsulation key || X25519 public key); it is zero when not needed.
    procedure Generate_CH_Ephemerals
      (Cfg           : in Config;
       KE            : in out KE_State;
       Client_Random : in out Bytes_32;
       Session_ID    : in out Bytes_32;
       Retry_Mode    : in Boolean;
+      Need_Hybrid   : in Boolean;
       PK_Bytes      : out Byte_Seq;
       P256_PK_Enc   : out Byte_Seq;
-      P384_PK_Enc   : out Byte_Seq)
+      P384_PK_Enc   : out Byte_Seq;
+      Hybrid_Share  : out Byte_Seq)
    with
      Pre =>
        PK_Bytes'First = 0
@@ -806,9 +867,43 @@ is
        and then P256_PK_Enc'Last = 64
        and then P384_PK_Enc'First = 0
        and then P384_PK_Enc'Last = 96
+       and then Hybrid_Share'First = 0
+       and then Hybrid_Share'Last = Hybrid_Client_Share_Len - 1
    is
       procedure Gen_Random (Output : out Byte_Seq) renames Cfg.Random.all;
    begin
+      --  X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem): an ML-KEM-768 key
+      --  pair from 64 bytes of randomness (d, z) and an X25519 key pair
+      --  independent of the pure X25519 share's. Retry mode reuses both.
+      --  The client share is ek || X25519 pk; ek is the middle of dk.
+      Hybrid_Share := (others => 0);
+      if Need_Hybrid then
+         if not Retry_Mode then
+            declare
+               D, Z : Bytes_32;
+               Key  : MLKEM.ML_KEM_768.MLKEM_Key;
+               SK   : Bytes_32;
+            begin
+               Gen_Random (Byte_Seq (D));
+               Gen_Random (Byte_Seq (Z));
+               MLKEM.ML_KEM_768.MLKEM_KeyGen (MLKEM.Bytes_32 (D), MLKEM.Bytes_32 (Z), Key);
+               KE.Hybrid_DK := Key.DK;
+               MLKEM.Sanitize (Key.DK);
+               Sanitize (D);
+               Sanitize (Z);
+               Gen_Random (Byte_Seq (SK));
+               KE.Hybrid_SK := SK;
+               Sanitize (SK);
+            end;
+         end if;
+         Hybrid_Share (0 .. 1183) := Byte_Seq (KE.Hybrid_DK (1152 .. 2335));
+         declare
+            Basepoint : constant Bytes_32 := (9, others => 0);
+         begin
+            SPARKTLSCrypto.X25519.Scalar_Mult
+              (Hybrid_Share (1184 .. 1215), KE.Hybrid_SK, Basepoint);
+         end;
+      end if;
       --  Generate ephemeral X25519 keypair (Fiat X25519).
       --  In retry mode (CH2 for HRR), reuse the CH1 SK so the server
       --  still recognises the share if the selected_group matches.
@@ -835,7 +930,12 @@ is
             Gen_Random (Byte_Seq (Tmp_P256));
             KE.P256_SK := Tmp_P256;
          end if;
-         SPARKTLSCrypto.P256.Point.P256_Mulgen (P256_Pt, KE.P256_SK, 32);
+         declare
+            Blind : Byte_Seq (0 .. 39);   --  SR-62
+         begin
+            Gen_Random (Blind);
+            SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (P256_Pt, KE.P256_SK, Blind);
+         end;
          SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
          SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
       end;
@@ -884,14 +984,16 @@ is
    type Shares_Len_Array is array (Maybe_ECDHE_Group) of N32;
 
    --  Single-entry shares_len, in bytes:
-   --   secp256r1: group(2)+key_len(2)+key(65) = 69
-   --   secp384r1: group(2)+key_len(2)+key(97) = 101
-   --   X25519:    group(2)+key_len(2)+key(32) = 36
+   --   secp256r1:      group(2)+key_len(2)+key(65) = 69
+   --   secp384r1:      group(2)+key_len(2)+key(97) = 101
+   --   X25519:         group(2)+key_len(2)+key(32) = 36
+   --   X25519MLKEM768: group(2)+key_len(2)+key(1216) = 1220
    Shares_Len : constant Shares_Len_Array := [
-      Group_None      => 0,
-      Group_Secp256r1 => 69,
-      Group_Secp384r1 => 101,
-      Group_X25519    => 36
+      Group_None           => 0,
+      Group_Secp256r1      => 69,
+      Group_Secp384r1      => 101,
+      Group_X25519         => 36,
+      Group_X25519MLKEM768 => 4 + Hybrid_Client_Share_Len
    ];
 
    procedure Build_Client_Hello
@@ -921,7 +1023,21 @@ is
 
       Initial_KS_Entry        : constant N32 := Shares_Len (Initial_Key_Share_Group);
       Restrict_Groups         : constant Boolean := HC.Cfg.Client_Key_Share_Group /= Group_None;
-      SG_Group_Count          : constant N32 := (if Restrict_Groups then 1 else 3);
+      --  Post-quantum on and no restriction: supported_groups leads with
+      --  X25519MLKEM768 and CH1 carries its share next to X25519's.
+      Offer_PQ                : constant Boolean :=
+        HC.Cfg.Offer_Post_Quantum
+        and then not Restrict_Groups
+        and then HC.Cfg.Versions /= TLS_1_2_Only;
+      Dual_KS                 : constant Boolean := Offer_PQ and then not Retry_KS_Single;
+      --  Hybrid material is needed for the dual CH1, a hybrid-only
+      --  restriction, or a retry the server steered to the hybrid.
+      Need_Hybrid             : constant Boolean :=
+        Dual_KS
+        or else Initial_Key_Share_Group = Group_X25519MLKEM768
+        or else (Retry_KS_Single and then HC.HRR_Selected_Group = Group_X25519MLKEM768);
+      SG_Group_Count          : constant N32 :=
+        (if Restrict_Groups then 1 elsif Offer_PQ then 4 else 3);
 
       --  Extension data sizes
       Host_Len     : constant N32 := N32 (HC.Cfg.Server_Name.Len);
@@ -946,8 +1062,11 @@ is
       --  Retry with selected group: 2 + Retry_KS_Entry (36/69/101).
       --  Retry with no curve change (cookie-only HRR): same as CH1
       --  = X25519 single share = 38 bytes.
+      --  With post-quantum on: two entries (1220 + 36) = 1258 bytes.
       KS_Data_Len  : constant N32 :=
-        (if Retry_KS_Single then 2 + Retry_KS_Entry else 2 + Initial_KS_Entry);
+        (if Retry_KS_Single then 2 + Retry_KS_Entry
+         elsif Dual_KS then 2 + Shares_Len (Group_X25519MLKEM768) + Shares_Len (Group_X25519)
+         else 2 + Initial_KS_Entry);
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
       --  supported_versions data: list_len(1) + version(2) * N.
@@ -1076,6 +1195,7 @@ is
       PK_Bytes    : Byte_Seq (0 .. 31);   --  X25519 public key
       P256_PK_Enc : Byte_Seq (0 .. 64);   --  P-256 public key (uncompressed)
       P384_PK_Enc : Byte_Seq (0 .. 96);   --  P-384 public key (uncompressed)
+      Hybrid_Share : Byte_Seq (0 .. Hybrid_Client_Share_Len - 1);   --  X25519MLKEM768 client share
    begin
       Result := (others => 0);
       Len := 0;
@@ -1084,7 +1204,7 @@ is
 
       Generate_CH_Ephemerals
         (HC.Cfg, HC.KE, HC.Client_Random, HC.Legacy_Session_ID,
-         Retry_Mode, PK_Bytes, P256_PK_Enc, P384_PK_Enc);
+         Retry_Mode, Need_Hybrid, PK_Bytes, P256_PK_Enc, P384_PK_Enc, Hybrid_Share);
       --  Record the length actually put on the wire (below): the TLS 1.2
       --  ServerHello check compares the echo against it. It was never set
       --  here before, so a TLS 1.2 server that echoed our session_id (RFC
@@ -1263,7 +1383,9 @@ is
 
          --  Extension 2: supported_groups (0x000A)
          declare
-            SG_Raw : constant Byte_Seq := Build_SG_Raw (Restrict_Groups, Initial_Key_Share_Group);
+            SG_Raw : constant Byte_Seq :=
+              Build_SG_Raw
+                (Restrict_Groups, Initial_Key_Share_Group, Offer_PQ, HC.Cfg.Post_Quantum_First);
          begin
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Groups, SG_Raw);
             Remaining_Ext_Bits :=
@@ -1304,9 +1426,12 @@ is
                Retry_KS_Entry,
                Initial_Key_Share_Group,
                Initial_KS_Entry,
+               Dual_KS,
+               HC.Cfg.Post_Quantum_First,
                PK_Bytes,
                P256_PK_Enc,
                P384_PK_Enc,
+               Hybrid_Share,
                KS_Raw);
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share, KS_Raw);
             Remaining_Ext_Bits :=
@@ -1607,7 +1732,7 @@ is
 
    --  One scratch buffer per parse for the refinement copies. The largest
    --  body read here is a cookie: 2 + the 1024 bytes HC.HRR_Cookie keeps.
-   Body_Scratch_Len : constant := 1100;
+   Body_Scratch_Len : constant := 1536;   --  X25519MLKEM768 key_share: 4 + 1120
 
    --  Type-level fact the generator checks at parse time but does not attach
    --  to the always_valid record: the raw arm is a 16-bit wire value. Only the
@@ -1683,9 +1808,10 @@ is
    end Downgrade_Sentinel_Present;
 
    procedure Compute_SH_Shared_Secret
-     (KE  : in out KE_State;
-      OK  : out Boolean;
-      Err : out Error_Code)
+     (KE     : in out KE_State;
+      Random : in     Live_Random_Fn;
+      OK     : out Boolean;
+      Err    : out Error_Code)
    is
    begin
       OK  := True;
@@ -1707,7 +1833,8 @@ is
                OK := False;
                return;
             end if;
-            KE.Shared := Secret_384;
+            KE.Shared := (others => 0);
+            KE.Shared (0 .. 47) := Secret_384;
          end;
       elsif (KE.Negotiated and then KE.Curve = Group_Secp256r1) then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
@@ -1721,8 +1848,13 @@ is
                OK := False;
                return;
             end if;
-            --  Multiply peer's public key by our private scalar
-            SPARKTLSCrypto.P256.Point.P256_Mul (Peer_Pt, KE.P256_SK, 32);
+            --  Multiply peer's public key by our private scalar (blinded, SR-62)
+            declare
+               Blind : Byte_Seq (0 .. 39);
+            begin
+               Random.all (Blind);
+               SPARKTLSCrypto.P256.Point.P256_Mul_Blinded (Peer_Pt, KE.P256_SK, Blind);
+            end;
             SPARKTLSCrypto.P256.Point.P256_To_Affine (Peer_Pt);
             --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
             declare
@@ -1734,6 +1866,31 @@ is
             KE.Shared := (others => 0);
             KE.Shared (0 .. 31) := X_Bytes;
          end;
+      elsif (KE.Negotiated and then KE.Curve = Group_X25519MLKEM768) then
+         --  X25519MLKEM768: shared = ML-KEM decapsulation (32) || X25519 (32)
+         declare
+            SS : MLKEM.Bytes_32;
+         begin
+            KE.Shared := (others => 0);
+            --  Our own decapsulation key; the check is the procedure's
+            --  precondition (FIPS 203 7.3) and costs one hash of ek.
+            if not MLKEM.ML_KEM_768.DK_Valid_For_Decaps (KE.Hybrid_DK) then
+               Err := Internal_Error;
+               OK := False;
+               return;
+            end if;
+            MLKEM.ML_KEM_768.MLKEM_Decaps (KE.Hybrid_CT, KE.Hybrid_DK, SS);
+            KE.Shared (0 .. 31) := Bytes_32 (SS);
+            MLKEM.Sanitize (SS);
+         end;
+         SPARKTLSCrypto.X25519.Scalar_Mult
+           (KE.Shared (32 .. 63), KE.Hybrid_SK, KE.Hybrid_Peer_PK);
+         if not Shared_Secret_Is_Acceptable_X25519 (KE.Shared (32 .. 63)) then
+            KE.Shared := (others => 0);
+            Err := Illegal_Parameter;
+            OK := False;
+            return;
+         end if;
       else
          --  X25519 ECDHE
          KE.Shared := (others => 0);
@@ -2052,11 +2209,14 @@ is
       --  any selected_group is either no change or a group we never
       --  offered (RFC 8446 4.1.4 / 4.2.8; BoGo UnnecessaryHelloRetryRequest,
       --  DisabledCurve-HelloRetryRequest). In the default profile CH1
-      --  offered all three groups with an X25519 share, so only X25519 is
-      --  no change.
+      --  offered every group with an X25519 share, and with post-quantum
+      --  on an X25519MLKEM768 share beside it, so those are no change.
       if HC.HRR_Selected_Group /= Group_None
         and then (HC.Cfg.Client_Key_Share_Group /= Group_None
-                  or else HC.HRR_Selected_Group = Group_X25519)
+                  or else HC.HRR_Selected_Group = Group_X25519
+                  or else (HC.HRR_Selected_Group = Group_X25519MLKEM768
+                           and then HC.Cfg.Offer_Post_Quantum
+                           and then HC.Cfg.Versions /= TLS_1_2_Only))
       then
          Err := Illegal_Parameter;
          return;
@@ -2196,12 +2356,16 @@ is
       --  configured group (X25519 by default), or the HRR's selected_group
       --  in CH2. Anything else is illegal_parameter (BoGo
       --  HelloRetryRequestCurveMismatch, SecondClientHelloWrongCurve).
-      Expected : constant ECDHE_Group :=
-        (if HC.Got_HRR and then HC.HRR_Selected_Group /= Group_None
-         then HC.HRR_Selected_Group
-         elsif HC.Cfg.Client_Key_Share_Group /= Group_None
-         then HC.Cfg.Client_Key_Share_Group
-         else Group_X25519);
+      --  Our ClientHello carries one share (the configured group, or the
+      --  HRR's selected_group in CH2), or two with post-quantum on:
+      --  X25519MLKEM768 and X25519. The server may pick any of those.
+      function Acceptable (G : ECDHE_Group) return Boolean
+      is (if HC.Got_HRR and then HC.HRR_Selected_Group /= Group_None
+          then G = HC.HRR_Selected_Group
+          elsif HC.Cfg.Client_Key_Share_Group /= Group_None
+          then G = HC.Cfg.Client_Key_Share_Group
+          else G = Group_X25519
+               or else (G = Group_X25519MLKEM768 and then HC.Cfg.Offer_Post_Quantum));
    begin
       RFLX.TLS_Handshake.Key_Share_SH.Initialize (KS, Scratch);
       RFLX.TLS_Handshake.Contains.Copy_Data (E, KS);
@@ -2218,7 +2382,7 @@ is
             KX_Len : constant N32 := N32 (RFLX.TLS_Handshake.Key_Share_SH.Get_Length (KS));
          begin
             if Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.X25519 and then KX_Len = 32
-              and then Expected = Group_X25519
+              and then Acceptable (Group_X25519)
             then
                declare
                   KB : RBT.Bytes (1 .. 32);
@@ -2229,7 +2393,7 @@ is
                   HC.KE.Negotiated := True;
                end;
             elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp256r1 and then KX_Len = 65
-              and then Expected = Group_Secp256r1
+              and then Acceptable (Group_Secp256r1)
             then
                declare
                   KB : RBT.Bytes (1 .. 65);
@@ -2242,7 +2406,7 @@ is
                   HC.KE.Negotiated := True;
                end;
             elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp384r1 and then KX_Len = 97
-              and then Expected = Group_Secp384r1
+              and then Acceptable (Group_Secp384r1)
             then
                declare
                   KB : RBT.Bytes (1 .. 97);
@@ -2252,6 +2416,24 @@ is
                      HC.KE.P384_PK (N32 (I)) := Byte (KB (RBT.Index (I + 1)));
                   end loop;
                   HC.KE.Curve := Group_Secp384r1;
+                  HC.KE.Negotiated := True;
+               end;
+            elsif not Grp.Known and then Group_Wire (Grp) = Group_X25519MLKEM768_Wire
+              and then KX_Len = Hybrid_Server_Share_Len
+              and then Acceptable (Group_X25519MLKEM768)
+            then
+               --  X25519MLKEM768: ciphertext (1088) || X25519 pk (32)
+               declare
+                  KB : RBT.Bytes (1 .. RBT.Index (Hybrid_Server_Share_Len));
+               begin
+                  RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS, KB);
+                  for I in 0 .. 1087 loop
+                     HC.KE.Hybrid_CT (MLKEM.I32 (I)) := MLKEM.Byte (KB (RBT.Index (I + 1)));
+                  end loop;
+                  for I in 0 .. 31 loop
+                     HC.KE.Hybrid_Peer_PK (N32 (I)) := Byte (KB (RBT.Index (1088 + I + 1)));
+                  end loop;
+                  HC.KE.Curve := Group_X25519MLKEM768;
                   HC.KE.Negotiated := True;
                end;
             else
@@ -2803,7 +2985,7 @@ is
          SS_OK  : Boolean;
          SS_Err : Error_Code;
       begin
-         Compute_SH_Shared_Secret (HC.KE, SS_OK, SS_Err);
+         Compute_SH_Shared_Secret (HC.KE, HC.Cfg.Random, SS_OK, SS_Err);
          if not SS_OK then
             Err := SS_Err;
             return;

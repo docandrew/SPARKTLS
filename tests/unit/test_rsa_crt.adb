@@ -12,6 +12,7 @@ with SPARKTLS.Credentials;
 with SPARKTLSCrypto.RSA;
 
 procedure Test_RSA_CRT is
+   Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    Total : Natural := 0;
    Pass  : Natural := 0;
    Fail  : Natural := 0;
@@ -65,6 +66,7 @@ begin
             Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
             Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
             Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+            Blind     => Blind16_Test,
             Signature => Sig, Sig_Len => L, OK => S_OK,
             Pub_Exp => Id.RSA_Pub_Exp, CRT => Id.RSA_CRT);
          Check ("odd-size modulus: PSS sign OK", S_OK);
@@ -77,6 +79,7 @@ begin
            (M_Hash => Byte_Seq (Hash), Hash_Len => 32,
             Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
             Priv_Exp => Id.RSA_Priv_Exp,
+            Blind     => Blind16_Test,
             Signature => Sig, Sig_Len => L, OK => S_OK);
          Check ("odd-size modulus: PKCS1 sign OK", S_OK);
          Check ("odd-size modulus: PKCS1 signature verifies",
@@ -115,12 +118,14 @@ begin
          Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => Plain, Sig_Len => LP, OK => OK_P);
       SPARKTLSCrypto.RSA.Sign_PSS
         (M_Hash => Byte_Seq (Hash), Hash_Len => 32,
          Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => CRT, Sig_Len => LC, OK => OK_C,
          Pub_Exp => Id.RSA_Pub_Exp, CRT => Id.RSA_CRT);
       Check ("plain sign OK", OK_P);
@@ -137,11 +142,13 @@ begin
         (M_Hash => Byte_Seq (Hash), Hash_Len => 32,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp,
+         Blind     => Blind16_Test,
          Signature => Plain, Sig_Len => LP, OK => OK_P);
       SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
         (M_Hash => Byte_Seq (Hash), Hash_Len => 32,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp,
+         Blind     => Blind16_Test,
          Signature => CRT, Sig_Len => LC, OK => OK_C,
          Pub_Exp => Id.RSA_Pub_Exp, CRT => Id.RSA_CRT);
       Check ("PKCS1 plain sign OK", OK_P);
@@ -161,12 +168,14 @@ begin
          Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => Plain, Sig_Len => LP, OK => OK_P);
       SPARKTLSCrypto.RSA.Sign_PSS
         (M_Hash => Byte_Seq (Hash), Hash_Len => 32,
          Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => CRT, Sig_Len => LC, OK => OK_C,
          Pub_Exp => Id.RSA_Pub_Exp, CRT => Bad);
       Check ("corrupt dP: sign still OK (fallback)", OK_C);
@@ -180,6 +189,7 @@ begin
          Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => CRT, Sig_Len => LC, OK => OK_C,
          Pub_Exp => Id.RSA_Pub_Exp, CRT => Bad);
       Check ("corrupt qInv: sign still OK (fallback)", OK_C);
@@ -193,6 +203,7 @@ begin
          Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => Id.RSA_Modulus, Mod_Len => Id.RSA_Mod_Len,
          Priv_Exp => Id.RSA_Priv_Exp, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => CRT, Sig_Len => LC, OK => OK_C,
          Pub_Exp => Id.RSA_Pub_Exp, CRT => Bad);
       Check ("short prime: sign still OK (fallback)", OK_C);

@@ -126,7 +126,15 @@ run_one ct_chacha20_poly1305 0  || fail=1
 run_one ct_poly1305_scalar   0  || fail=1
 run_one ct_x25519            0  || fail=1
 run_one ct_ed25519           0  || fail=1
-run_one ct_p256_ecdsa        0  || fail=1
+#  ct_p256_ecdsa: exactly ONE classified site. The SR-66 fault check
+#  re-decodes the nonce point [k]G to confirm it is on the curve before
+#  using its x-coordinate as r. That x-coordinate is public (it becomes
+#  the signature's r), but memcheck taints it through the secret nonce k,
+#  so the on-curve branch reads as key-dependent. The branch outcome does
+#  not vary with k (a group element is always on the curve); dudect
+#  confirms no timing dependence. Same category as ct_rsa_sign_crt's
+#  verify-after-sign. More sites means a new key-dependent branch.
+run_one ct_p256_ecdsa        1 exact  || fail=1
 run_one ct_p384_ecdsa        0  || fail=1
 run_one ct_hkdf              0  || fail=1
 run_one ct_aes_gcm           0  || fail=1

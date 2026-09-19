@@ -37,12 +37,13 @@ is
    --  PSK is all zeros for initial handshake (no resumption).
    procedure Derive_Early_Secret (Early : out Digest; PSK : in Bytes_32);
 
-   --  RFC 8446 7.1: Handshake Secret from ECDHE shared secret.
+   --  RFC 8446 7.1: Handshake Secret from the (EC)DHE / KEM shared secret.
    --  Shared secret length depends on key exchange group:
-   --    X25519: 32 bytes, P-256: 32 bytes, P-384: 48 bytes.
+   --    X25519: 32 bytes, P-256: 32 bytes, P-384: 48 bytes,
+   --    X25519MLKEM768: 64 bytes (ML-KEM secret || X25519 secret).
    procedure Derive_Handshake_Secret
      (HS_Secret : out Digest; Shared : in Byte_Seq; Early_Secret : in Digest)
-   with Pre => Shared'First = 0 and Shared'Length > 0 and Shared'Length <= 48;  --  Max: P-384
+   with Pre => Shared'First = 0 and Shared'Length > 0 and Shared'Length <= 64;  --  Max: X25519MLKEM768 (64), P-384 (48)
 
    --  RFC 8446 7.1: Derive client and server handshake traffic secrets.
    --  These are used to encrypt handshake messages after ServerHello.
@@ -172,7 +173,7 @@ is
      (HS_Secret : out Digest_384; Shared : in Byte_Seq; Early_Secret : in Digest_384)
    with
      Pre =>
-       Shared'First = 0 and Shared'Length > 0 and Shared'Length <= 48;  --  Max: P-384 shared secret
+       Shared'First = 0 and Shared'Length > 0 and Shared'Length <= 64;  --  Max: X25519MLKEM768 (64), P-384 (48)
 
    procedure Derive_HS_Traffic_Secrets_384
      (Client_HS_Secret : out HKDF384.OKM384_Seq;

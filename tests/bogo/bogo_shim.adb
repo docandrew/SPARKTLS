@@ -130,6 +130,8 @@ procedure Bogo_Shim is
       Host_Name_Len        : Natural := 0;
       Ack_Server_Name      : Boolean := True;
       Preferred_Group      : Unsigned_16 := 0;
+      Seen_Hybrid          : Boolean := False;
+      PQ_First             : Boolean := True;
       Curve_Count          : Natural := 0;
       Resumption_Delay_Seconds : Natural := 0;
       Time_Offset_Seconds      : Natural := 0;
@@ -541,7 +543,16 @@ procedure Bogo_Shim is
 
       procedure Maybe_Set_Preferred_Group (V : Unsigned_16) is
       begin
-         if V in 16#001D# | 16#0017# | 16#0018# then
+         if V in 16#001D# | 16#0017# | 16#0018# | 16#11EC# then
+            --  Preference between the hybrid and X25519 follows the order
+            --  of the -curves flags: a classical group before the hybrid
+            --  puts X25519 first (BoGo MLKEMKeyShareIncludedSecond/Third).
+            if V /= 16#11EC# and then Cfg.Curve_Count >= 0 and then not Cfg.Seen_Hybrid then
+               Cfg.PQ_First := False;
+            end if;
+            if V = 16#11EC# then
+               Cfg.Seen_Hybrid := True;
+            end if;
             Cfg.Curve_Count := Cfg.Curve_Count + 1;
             if Cfg.Curve_Count = 1 then
                Cfg.Preferred_Group := V;
@@ -848,7 +859,7 @@ procedure Bogo_Shim is
                declare
                   V : constant Unsigned_16 := Dec_To_U16 (Next_Arg);
                begin
-                  if V in 16#001D# | 16#0017# | 16#0018# then
+                  if V in 16#001D# | 16#0017# | 16#0018# | 16#11EC# then
                      Cfg.Preferred_Group := V;
                   end if;
                end;
@@ -1804,6 +1815,7 @@ procedure Bogo_Shim is
                Client_Cfg.Verify_Mode := Mode_RFC5280;
                Client_Cfg.Versions := Policy;
                Client_Cfg.Client_Key_Share_Group := Group_From_Wire (Cfg.Preferred_Group);
+               Client_Cfg.Post_Quantum_First := Cfg.PQ_First;
                Client_Cfg.Resume_Ticket := Saved_Ticket;
                Client_Cfg.TLS12_Resume_Ticket := Saved_Ticket_12;
                --  BoGo's client accepts any server chain unless

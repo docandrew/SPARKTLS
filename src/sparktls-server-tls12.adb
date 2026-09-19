@@ -750,13 +750,22 @@ is
          begin
             pragma Assert (S.HC.KE.Negotiated);
             Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
-            if SKE_Len > 0 then
-               Append_Transcript (S.HC, SKE_Buf (0 .. SKE_Len - 1));
-               Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out);
-               if Rec_Out = 0 then
-                  Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-                  return;
-               end if;
+            --  An ECDHE suite was negotiated (KE.Negotiated), so a
+            --  ServerKeyExchange is mandatory here. A zero length means the
+            --  signature step failed closed (RSA verify-after-sign mismatch,
+            --  ECDSA nonce point off-curve, identity shape mismatch). That is
+            --  a local failure and must abort the handshake with our own
+            --  alert; continuing the flight without the message would hand
+            --  the peer a malformed flight and misattribute the fault to it.
+            if SKE_Len = 0 then
+               Send_Alert_And_Error (S, Internal_Error, Result);
+               return;
+            end if;
+            Append_Transcript (S.HC, SKE_Buf (0 .. SKE_Len - 1));
+            Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out);
+            if Rec_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
             end if;
          end;
 
@@ -1611,7 +1620,8 @@ is
       Err := (if OK then No_Error else Illegal_Parameter);
    end Shared_Secret_X25519_12;
 
-   procedure Shared_Secret_P256_12 (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   procedure Shared_Secret_P256_12
+     (KE : in out KE_State; Random : in Live_Random_Fn; OK : out Boolean; Err : out Error_Code)
    is
       use SPARKTLSCrypto.P256.Point;
       Pt : P256_Jacobian;
@@ -1621,7 +1631,12 @@ is
       Err := Illegal_Parameter;
       P256_Decode (Pt, KE.P256_PK, V);
       if V /= 0 then
-         P256_Mul (Pt, KE.P256_SK, 32);
+         declare
+            Blind : Byte_Seq (0 .. 39);   --  SR-62
+         begin
+            Random.all (Blind);
+            P256_Mul_Blinded (Pt, KE.P256_SK, Blind);
+         end;
          P256_To_Affine (Pt);
          declare
             E : Byte_Seq (0 .. 64);
@@ -1642,7 +1657,8 @@ is
    begin
       SPARKTLSCrypto.P384.Point.P384_ECDHE (SS, OK384, KE.P384_SK, KE.P384_PK);
       if OK384 then
-         KE.Shared := SS;
+         KE.Shared := (others => 0);
+         KE.Shared (0 .. 47) := SS;
          OK := True;
          Err := No_Error;
       else
@@ -1682,17 +1698,22 @@ is
    --  illegal_parameter; an unselectable group is the generic
    --  handshake_failure.
    procedure Compute_Shared_Secret_12
-     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code) is
+     (KE : in out KE_State; Random : in Live_Random_Fn; OK : out Boolean; Err : out Error_Code) is
    begin
       case KE.Curve is
          when Group_X25519    =>
             Shared_Secret_X25519_12 (KE, OK, Err);
 
          when Group_Secp256r1 =>
-            Shared_Secret_P256_12 (KE, OK, Err);
+            Shared_Secret_P256_12 (KE, Random, OK, Err);
 
          when Group_Secp384r1 =>
             Shared_Secret_P384_12 (KE, OK, Err);
+
+         when Group_X25519MLKEM768 =>
+            --  TLS 1.3 only; never negotiated by the TLS 1.2 server.
+            OK := False;
+            Err := Handshake_Failure;
       end case;
    end Compute_Shared_Secret_12;
 
@@ -1756,7 +1777,7 @@ is
          SS_OK  : Boolean := False;
          SS_Err : Error_Code := Handshake_Failure;
       begin
-         Compute_Shared_Secret_12 (S.HC.KE, SS_OK, SS_Err);
+         Compute_Shared_Secret_12 (S.HC.KE, S.HC.Cfg.Random, SS_OK, SS_Err);
          if not SS_OK then
             Send_Alert_And_Error (S, SS_Err, Result);
             pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
