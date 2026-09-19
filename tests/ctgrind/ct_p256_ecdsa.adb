@@ -18,6 +18,7 @@ with SPARKTLSCrypto.P256.ECDSA;
 with Ctgrind;
 
 procedure Ct_P256_ECDSA is
+   Blind40_Test : constant Byte_Seq (0 .. 39) := (others => 16#7E#);   --  fixed blinding for tests
    Hash : constant Bytes_32 :=
      (16#00#, 16#11#, 16#22#, 16#33#, 16#44#, 16#55#, 16#66#, 16#77#,
       16#88#, 16#99#, 16#AA#, 16#BB#, 16#CC#, 16#DD#, 16#EE#, 16#FF#,
@@ -44,7 +45,7 @@ begin
    Ctgrind.Make_Undefined (D'Address, Interfaces.C.size_t (D'Length));
    Ctgrind.Make_Undefined (K'Address, Interfaces.C.size_t (K'Length));
 
-   SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K, R, S, OK);
+   SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K, Blind40_Test, R, S, OK);
 
    --  Outputs are public (signature) — re-define so any post-sign
    --  use isn't flagged.

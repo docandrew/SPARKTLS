@@ -9,6 +9,7 @@ with SPARKTLSCrypto.RSA;
 
 procedure Test_RSA_Sign is
 
+   Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    package Random_Byte is new
       Ada.Numerics.Discrete_Random (SPARKNaCl.Byte);
    Gen : Random_Byte.Generator;
@@ -67,6 +68,7 @@ begin
       Mod_Len   => Id.RSA_Mod_Len,
       Priv_Exp  => Id.RSA_Priv_Exp,
       Salt      => Byte_Seq (Salt),
+      Blind     => Blind16_Test,
       Signature => Sig,
       Sig_Len   => Sig_Len,
       OK        => Sign_OK);

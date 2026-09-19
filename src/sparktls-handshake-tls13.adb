@@ -31,6 +31,8 @@ with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.TLS_Handshake.Server_Hello;
 with RFLX.TLS_Handshake.Server_Hello_Ext;
+with MLKEM;
+with MLKEM.ML_KEM_768;
 with RFLX.TLS_Handshake.SH_Extensions_TLS;
 with RFLX.TLS_Handshake.SH_Extension_TLS;
 with RFLX.TLS_Handshake.Hello_Retry_Request;
@@ -85,7 +87,8 @@ is
    --  key_len(2)) followed by the encoded public key bytes.
    ----------------------------------------------------------------------------
 
-   subtype KS_Raw_Buffer is Byte_Seq (0 .. 103);  --  max P-384: 4 + 97
+   --  Largest entry: X25519MLKEM768, group(2) + len(2) + 1120.
+   subtype KS_Raw_Buffer is Byte_Seq (0 .. 3 + Hybrid_Server_Share_Len);
    --  Wire representation of a single TLS 1.3 KeyShareEntry.
 
    --  X25519 key share generation (RFC 8446 4.2.8.2).
@@ -180,6 +183,8 @@ is
       Peer_Pt : P256_Jacobian;
       Valid   : SPARKNaCl.U32;
       Tmp_SK  : Bytes_32;
+      Blind_G : Byte_Seq (0 .. 39);   --  SR-62, generator multiplication
+      Blind_P : Byte_Seq (0 .. 39);   --  SR-62, peer-point multiplication
    begin
       KS_Raw := (others => 0);
       KS_Raw_Len := 0;
@@ -191,8 +196,10 @@ is
          return;
       end if;
       HC.KE.P256_SK := Tmp_SK;
+      Gen_Random (Blind_G);
+      Gen_Random (Blind_P);
       --  Our public key
-      P256_Mulgen (PK_Jac, HC.KE.P256_SK, 32);
+      P256_Mulgen_Blinded (PK_Jac, HC.KE.P256_SK, Blind_G);
       P256_To_Affine (PK_Jac);
       P256_Encode (PK_Enc, PK_Jac);
       --  Shared secret: x-coord of [our_sk] * peer_pk
@@ -202,7 +209,7 @@ is
          return;  --  invalid peer pubkey
 
       end if;
-      P256_Mul (Peer_Pt, HC.KE.P256_SK, 32);
+      P256_Mul_Blinded (Peer_Pt, HC.KE.P256_SK, Blind_P);
       P256_To_Affine (Peer_Pt);
       declare
          Enc : Byte_Seq (0 .. 64);
@@ -272,7 +279,8 @@ is
          HC.Ext_Parse_Err := Illegal_Parameter;
          return;
       end if;
-      HC.KE.Shared := SS;
+      HC.KE.Shared := (others => 0);
+      HC.KE.Shared (0 .. 47) := SS;
       --  group(2) + key_len(2) + key(97) = 101
       KS_Raw (0) := 0;
       KS_Raw (1) := 16#18#;
@@ -285,6 +293,84 @@ is
       OK := True;
    end Generate_KS_P384;
 
+   --  X25519MLKEM768 key share generation (draft-ietf-tls-ecdhe-mlkem):
+   --  encapsulate to the client's ML-KEM-768 key and do X25519 against
+   --  its X25519 half. Server share = ciphertext || X25519 pk; shared
+   --  secret = ML-KEM secret || X25519 secret. OK = False (with
+   --  illegal_parameter) if the client's encapsulation key fails the
+   --  FIPS 203 7.2 check (BoGo CurveTest-Invalid-MLKEMEncapKeyNotReduced)
+   --  or its X25519 point is of small order.
+   procedure Generate_KS_Hybrid
+     (HC         : in out Handshake_Context;
+      KS_Raw     : out KS_Raw_Buffer;
+      KS_Raw_Len : out N32;
+      OK         : out Boolean)
+   with
+     Post =>
+       (if OK then KS_Raw_Len = 4 + Hybrid_Server_Share_Len else KS_Raw_Len = 0)
+       and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local))
+       and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+       and then (if HC.Cfg.Local'Old /= null and then Local_Config_Valid (HC.Cfg.Local'Old)
+                 then Local_Config_Valid (HC.Cfg.Local))
+       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
+                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
+       and then HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
+       and then HC.Server_Random = HC.Server_Random'Old
+   is
+      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
+      Basepoint : constant Bytes_32 := (9, others => 0);
+      M         : Bytes_32;
+      SS        : MLKEM.Bytes_32;
+      CT        : MLKEM.ML_KEM_768.Ciphertext;
+      Tmp_SK    : Bytes_32;
+      PK_Bytes  : Bytes_32;
+   begin
+      KS_Raw := (others => 0);
+      KS_Raw_Len := 0;
+      OK := False;
+      --  FIPS 203 7.2 on the client's encapsulation key: the modulus check.
+      if not MLKEM.ML_KEM_768.EK_Valid_For_Encaps (HC.KE.Hybrid_Peer_EK) then
+         HC.Ext_Parse_Err := Illegal_Parameter;
+         return;
+      end if;
+      --  32 bytes of randomness for encapsulation, 32 for X25519
+      Gen_Random (Byte_Seq (M));
+      Gen_Random (Byte_Seq (Tmp_SK));
+      if All_Zero_Bytes (Byte_Seq (M)) or else All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
+         HC.Ext_Parse_Err := Internal_Error;
+         return;
+      end if;
+      HC.KE.Hybrid_SK := Tmp_SK;
+      Sanitize (Tmp_SK);
+      MLKEM.ML_KEM_768.MLKEM_Encaps (HC.KE.Hybrid_Peer_EK, MLKEM.Bytes_32 (M), SS, CT);
+      Sanitize (M);
+      HC.KE.Shared := (others => 0);
+      HC.KE.Shared (0 .. 31) := Bytes_32 (SS);
+      MLKEM.Sanitize (SS);
+      SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Hybrid_SK, Basepoint);
+      SPARKTLSCrypto.X25519.Scalar_Mult
+        (HC.KE.Shared (32 .. 63), HC.KE.Hybrid_SK, HC.KE.Hybrid_Peer_PK);
+      --  RFC 7748 6.1 small-subgroup defence on the X25519 half.
+      if not Shared_Secret_Is_Acceptable_X25519 (HC.KE.Shared (32 .. 63)) then
+         HC.KE.Shared := (others => 0);
+         HC.Ext_Parse_Err := Illegal_Parameter;
+         return;
+      end if;
+      --  group(2) + key_len(2) + ciphertext(1088) + pk(32)
+      KS_Raw (0) := Byte (Group_X25519MLKEM768_Wire / 256);
+      KS_Raw (1) := Byte (Group_X25519MLKEM768_Wire mod 256);
+      KS_Raw (2) := Byte (Hybrid_Server_Share_Len / 256);
+      KS_Raw (3) := Byte (Hybrid_Server_Share_Len mod 256);
+      for I in N32 range 0 .. 1087 loop
+         KS_Raw (4 + I) := Byte (CT (MLKEM.I32 (I)));
+      end loop;
+      for I in N32 range 0 .. 31 loop
+         KS_Raw (4 + 1088 + I) := PK_Bytes (I);
+      end loop;
+      KS_Raw_Len := 4 + Hybrid_Server_Share_Len;
+      OK := True;
+   end Generate_KS_Hybrid;
+
    procedure Select_Server_Key_Share
      (HC         : in out Handshake_Context;
       KS_Raw     : out KS_Raw_Buffer;
@@ -295,7 +381,7 @@ is
        Session_ID_Echo_RFC_8446_4_1_3 (HC)
        and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
      Post =>
-       (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)
+       (if OK then KS_Raw_Len in 36 | 69 | 101 | 4 + Hybrid_Server_Share_Len else KS_Raw_Len = 0)
        and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local))
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
@@ -311,13 +397,28 @@ is
    begin
       KS_Raw := (others => 0);
 
-      --  Select key exchange group (prefer x25519 > P-256 > P-384).
+      --  Select key exchange group (prefer X25519MLKEM768 when post-
+      --  quantum is on, then x25519 > P-256 > P-384).
       --  RFC 8446 4.2.8: the selected_group MUST come from a group
       --  the client offered. Each branch below conditions on the
       --  matching Client_Has_* flag so the per-branch pragma Assert
       --  proves the cross-reference.
       HC.KE.Shared := (others => 0);
-      if HC.HRR_Sent and then HC.HRR_Selected_Group = Group_X25519 then
+      if HC.HRR_Sent and then HC.HRR_Selected_Group = Group_X25519MLKEM768 then
+         if not HC.Client_Has_X25519MLKEM768 then
+            KS_Raw_Len := 0;
+            OK := False;
+            return;
+         end if;
+         HC.KE.Curve := Group_X25519MLKEM768;
+         HC.KE.Negotiated := True;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
+         Generate_KS_Hybrid (HC, KS_Raw, KS_Raw_Len, OK);
+         if not OK then
+            KS_Raw_Len := 0;
+            return;
+         end if;
+      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = Group_X25519 then
          if not HC.Client_Has_X25519 then
             KS_Raw_Len := 0;
             OK := False;
@@ -362,6 +463,15 @@ is
       elsif HC.HRR_Sent then
          KS_Raw_Len := 0;
          OK := False;
+      elsif HC.Cfg.Offer_Post_Quantum and then HC.Client_Has_X25519MLKEM768 then
+         HC.KE.Curve := Group_X25519MLKEM768;
+         HC.KE.Negotiated := True;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
+         Generate_KS_Hybrid (HC, KS_Raw, KS_Raw_Len, OK);
+         if not OK then
+            KS_Raw_Len := 0;
+            return;
+         end if;
       elsif HC.Client_Has_X25519 then
          HC.KE.Curve := Group_X25519;
          HC.KE.Negotiated := True;
@@ -514,8 +624,8 @@ is
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Generous buffer, as the ClientHello and HelloRetryRequest builders:
-      --  the body is at most 40 + 32 + 117 = 189 bytes.
-      SH_Buf_Len : constant := 256;
+      --  the body is at most 40 + 32 + 1140 = 1212 bytes (X25519MLKEM768).
+      SH_Buf_Len : constant := 1536;
       Sid_Len    : constant N32 := N32 (HC.Legacy_Session_ID_Len);
       Sid        : constant Byte_Seq := Byte_Seq (HC.Legacy_Session_ID);
       KS_Raw     : KS_Raw_Buffer;
@@ -552,7 +662,7 @@ is
             return;
          end if;
       end;
-      if KS_Raw_Len not in 36 | 69 | 101 then
+      if KS_Raw_Len not in 36 | 69 | 101 | 4 + Hybrid_Server_Share_Len then
          return;
       end if;
 
@@ -639,9 +749,11 @@ is
          --  other RecordFlux builders do; the outer TLS_Handshake context is
          --  the remaining half-step (task 147).
          Result (0) := HS_Msg_Wire (HT_Server_Hello);
-         Result (1) := 0;
-         Result (2) := 0;
-         Result (3) := Byte (Body_Len);
+         --  3-byte body length (RFC 8446 4): 40 + sid + extensions, which
+         --  passes 255 with an X25519MLKEM768 share.
+         Result (1) := Byte (Body_Len / 65536);
+         Result (2) := Byte ((Body_Len / 256) mod 256);
+         Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
          SPARKTLS.RFLX_Borrow.Discard (Buf);
          --  No free: Arena is the reusable session buffer, returned above.
@@ -1199,6 +1311,7 @@ is
                K_Bytes        : Bytes_32;
                K_OK           : Boolean;
                R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
+               Blind          : Byte_Seq (0 .. 39);   --  SR-62
             begin
                --  RFC 6979 deterministic nonce. Abort signing if the
                --  fixed, constant-time candidate budget is exhausted.
@@ -1208,10 +1321,19 @@ is
                   Sig_OK := False;
                   return;
                end if;
+               --  Blinding is defence in depth; if no live CSPRNG is
+               --  configured, a zero blind means no blinding (the scalar
+               --  and coordinates are used as-is) and signing still works.
+               if Random /= null then
+                  Random.all (Blind);
+               else
+                  Blind := (others => 0);
+               end if;
                SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => H,
                   D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
                   K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+                  Blind => Blind,
                   R_Out => R_Half,
                   S_Out => S_Half,
                   OK    => Sig_OK);
@@ -1255,8 +1377,10 @@ is
                use SPARKTLSCrypto.Hashing.SHA256;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_32;
+               Blind : Bytes_16;   --  SR-61
             begin
                Random.all (Byte_Seq (Salt));
+               Random.all (Byte_Seq (Blind));
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 32,
@@ -1266,6 +1390,7 @@ is
                   Priv_Exp  => Id.RSA_Priv_Exp,
                   Pub_Exp   => Id.RSA_Pub_Exp,
                   CRT       => Id.RSA_CRT,
+                  Blind     => Blind,
                   Salt      => Byte_Seq (Salt),
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
@@ -1278,8 +1403,10 @@ is
                use SPARKNaCl.Hashing.SHA384;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_48;
+               Blind : Bytes_16;   --  SR-61
             begin
                Random.all (Byte_Seq (Salt));
+               Random.all (Byte_Seq (Blind));
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 48,
@@ -1289,6 +1416,7 @@ is
                   Priv_Exp  => Id.RSA_Priv_Exp,
                   Pub_Exp   => Id.RSA_Pub_Exp,
                   CRT       => Id.RSA_CRT,
+                  Blind     => Blind,
                   Salt      => Byte_Seq (Salt),
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
@@ -1301,8 +1429,10 @@ is
                use SPARKNaCl.Hashing.SHA512;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_64;
+               Blind : Bytes_16;   --  SR-61
             begin
                Random.all (Byte_Seq (Salt));
+               Random.all (Byte_Seq (Blind));
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 64,
@@ -1312,6 +1442,7 @@ is
                   Priv_Exp  => Id.RSA_Priv_Exp,
                   Pub_Exp   => Id.RSA_Pub_Exp,
                   CRT       => Id.RSA_CRT,
+                  Blind     => Blind,
                   Salt      => Byte_Seq (Salt),
                   Signature => Sig,
                   Sig_Len   => Sig_Len,

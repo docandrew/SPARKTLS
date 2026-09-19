@@ -11,6 +11,7 @@ with Dudect_Helpers;
 --  (big-endian, left-padded to 256/128 bytes). The keys exist only in
 --  this test source and protect nothing.
 procedure Dudect_RSA_Sign is
+   Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    A_N : constant Byte_Seq (0 .. 255) :=
      (
       16#AF#, 16#E1#, 16#93#, 16#8C#, 16#CD#, 16#80#, 16#C4#, 16#BC#, 16#60#, 16#22#, 16#0B#, 16#9A#,
@@ -248,6 +249,7 @@ procedure Dudect_RSA_Sign is
       SPARKTLSCrypto.RSA.Sign_PSS
         (M_Hash => Byte_Seq (Hash), Hash_Len => 32, Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => A_N, Mod_Len => 256, Priv_Exp => A_D, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => Sig, Sig_Len => L, OK => OK, Pub_Exp => 65537, CRT => CA);
    end Sub_0;
    procedure Sub_1 is
@@ -255,6 +257,7 @@ procedure Dudect_RSA_Sign is
       SPARKTLSCrypto.RSA.Sign_PSS
         (M_Hash => Byte_Seq (Hash), Hash_Len => 32, Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
          Modulus => B_N, Mod_Len => 256, Priv_Exp => B_D, Salt => Byte_Seq (Salt),
+         Blind     => Blind16_Test,
          Signature => Sig, Sig_Len => L, OK => OK, Pub_Exp => 65537, CRT => CB);
    end Sub_1;
 begin

@@ -1753,18 +1753,28 @@ is
                   Arena_Storage   => D.Arena_Storage,
                   Result          => CV_Buf,
                   Len             => CV_Len);
-               if CV_Len > 0 then
-                  SPARKTLS_Transcript.Append (S.HC.TS, CV_Buf (0 .. CV_Len - 1));
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => CV_Buf (0 .. CV_Len - 1),
-                     Inner_Type => 16#16#,
-                     Keys       => S.HC.Client_HS,
-                     Output     => S.Output,
-                     Bytes_Out  => Enc_Out);
-                  if Enc_Out = 0 then
-                     Result := Error_Alert;
-                     return;
-                  end if;
+               --  RFC 8446 4.4.3: a client that sent a non-empty Certificate
+               --  MUST send CertificateVerify. A zero length here means the
+               --  signature failed closed (RSA verify-after-sign mismatch,
+               --  ECDSA nonce point off-curve). Sending Finished without the
+               --  CertificateVerify would be a protocol violation the server
+               --  rejects with its own alert; fail locally instead.
+               if CV_Len = 0 then
+                  S.Last_Error := Internal_Error;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+               SPARKTLS_Transcript.Append (S.HC.TS, CV_Buf (0 .. CV_Len - 1));
+               Records.Build_Encrypted_Record
+                 (Plaintext  => CV_Buf (0 .. CV_Len - 1),
+                  Inner_Type => 16#16#,
+                  Keys       => S.HC.Client_HS,
+                  Output     => S.Output,
+                  Bytes_Out  => Enc_Out);
+               if Enc_Out = 0 then
+                  Result := Error_Alert;
+                  return;
                end if;
             end;
          end;
@@ -2103,7 +2113,10 @@ is
                --  Use full 48 bytes if P-384 ECDHE, else first 32
                if (S.HC.KE.Negotiated and then S.HC.KE.Curve = Group_Secp384r1) then
                   Key_Schedule.Derive_Handshake_Secret_384
-                    (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
+                    (HS_Secret, S.HC.KE.Shared (0 .. 47), Early);
+               elsif (S.HC.KE.Negotiated and then S.HC.KE.Curve = Group_X25519MLKEM768) then
+                  Key_Schedule.Derive_Handshake_Secret_384
+                    (HS_Secret, S.HC.KE.Shared (0 .. 63), Early);
                else
                   Key_Schedule.Derive_Handshake_Secret_384
                     (HS_Secret, S.HC.KE.Shared (0 .. 31), Early);
@@ -2140,7 +2153,10 @@ is
                --  Pass full shared secret: 48 bytes for P-384, 32 for others
                if (S.HC.KE.Negotiated and then S.HC.KE.Curve = Group_Secp384r1) then
                   Key_Schedule.Derive_Handshake_Secret
-                    (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
+                    (HS_Secret, S.HC.KE.Shared (0 .. 47), Early);
+               elsif (S.HC.KE.Negotiated and then S.HC.KE.Curve = Group_X25519MLKEM768) then
+                  Key_Schedule.Derive_Handshake_Secret
+                    (HS_Secret, S.HC.KE.Shared (0 .. 63), Early);
                else
                   Key_Schedule.Derive_Handshake_Secret (HS_Secret, S.HC.KE.Shared (0 .. 31), Early);
                end if;

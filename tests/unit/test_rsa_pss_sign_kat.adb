@@ -5,6 +5,7 @@ with SPARKNaCl; use SPARKNaCl;
 with SPARKTLSCrypto.RSA;
 
 procedure Test_RSA_PSS_Sign_KAT is
+   Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    Total : Natural := 0;
    Pass  : Natural := 0;
    Fail  : Natural := 0;
@@ -111,6 +112,7 @@ begin
       Mod_Len   => 256,
       Priv_Exp  => D,
       Salt      => Salt,
+      Blind     => Blind16_Test,
       Signature => Sig,
       Sig_Len   => Sig_Len,
       OK        => OK);

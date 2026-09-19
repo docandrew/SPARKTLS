@@ -30,8 +30,14 @@ SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
 SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-4610f08961d5424d7f5d906b259733ccd3712066}"   # master 2026-09-14, PR #7
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-c47b947c69551e40914f0f16935886234eeb00ac}"   # master 2026-09-19, perf tiers + hardening (PR merged)
 
+
+# ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).
+# TODO(pin): replace with the first pushed commit of docandrew/sparkmlkem;
+# CI cannot pass until it is.
+SPARKMLKEM_URL="https://github.com/docandrew/sparkmlkem.git"
+SPARKMLKEM_REF="${SPARKMLKEM_REF:-429bdd71de0ce3bc14db46ef3fc6d755bd340569}"   # master 2026-09-19, initial import
 
 # Needed by examples/ (pinned ../../sparkentropy). Without it the examples
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
@@ -55,9 +61,10 @@ clone_at() {
 clone_at "$SPARKX509_URL"      "$SPARKX509_REF"      "sparkx509"
 clone_at "$SPARKTLSCRYPTO_URL" "$SPARKTLSCRYPTO_REF" "sparktlscrypto"
 clone_at "$SPARKENTROPY_URL"   "$SPARKENTROPY_REF"   "sparkentropy"
+clone_at "$SPARKMLKEM_URL"     "$SPARKMLKEM_REF"     "sparkmlkem"
 
 # sparknacl comes from the Alire index (sparknacl ^4.0.0 -> 4.0.1), not from a
 # sibling clone: its git manifest pins gnatprove ^14.1.1, which no release of
 # gnatprove 16 can satisfy, while the index release only requires gnat >= 14.2.1.
 echo "== sibling crates ready under $PARENT"
-ls -d "$PARENT"/sparkx509 "$PARENT"/sparktlscrypto "$PARENT"/sparkentropy 2>/dev/null
+ls -d "$PARENT"/sparkx509 "$PARENT"/sparktlscrypto "$PARENT"/sparkentropy "$PARENT"/sparkmlkem 2>/dev/null

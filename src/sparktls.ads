@@ -9,6 +9,7 @@ with RFLX.RFLX_Builtin_Types;
 with X509;
 with X509.CRL;
 with SPARKTLSCrypto.RSA;
+with MLKEM.ML_KEM_768;
 
 package SPARKTLS
   with SPARK_Mode => On
@@ -285,21 +286,43 @@ is
    ----------------------------------------------------------------------------
    -- ECDHE Groups
    ----------------------------------------------------------------------------
-   type Maybe_ECDHE_Group is (Group_None, Group_Secp256r1, Group_Secp384r1, Group_X25519);
-   subtype ECDHE_Group is Maybe_ECDHE_Group range Group_Secp256r1 .. Group_X25519;
+   --  NamedGroup values we implement. The three ECDHE groups serve TLS 1.2
+   --  and 1.3; X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem, the hybrid the
+   --  browsers ship) is TLS 1.3 only: RFC 8446 4.2.7 key exchange with a
+   --  KEM has no ServerKeyExchange shape, and the draft forbids the group
+   --  in TLS 1.2 (BoGo TLS12ServerShouldNotSelect / ClientShouldNotAllowInTLS12).
+   --  The type name predates the KEM group; "group" throughout means
+   --  NamedGroup.
+   type Maybe_ECDHE_Group is
+     (Group_None, Group_Secp256r1, Group_Secp384r1, Group_X25519, Group_X25519MLKEM768);
+   subtype ECDHE_Group is Maybe_ECDHE_Group range Group_Secp256r1 .. Group_X25519MLKEM768;
+   --  The groups a TLS 1.2 ECDHE handshake may negotiate.
+   subtype TLS12_ECDHE_Group is Maybe_ECDHE_Group range Group_Secp256r1 .. Group_X25519;
 
-   --  RFC 8422 5.1.1: NamedGroup wire values
-   Group_Secp256r1_Wire : constant Unsigned_16 := 16#0017#;
-   Group_Secp384r1_Wire : constant Unsigned_16 := 16#0018#;
-   Group_X25519_Wire    : constant Unsigned_16 := 16#001D#;
+   --  RFC 8422 5.1.1: NamedGroup wire values; draft-ietf-tls-ecdhe-mlkem
+   --  section 3 for the hybrid.
+   Group_Secp256r1_Wire     : constant Unsigned_16 := 16#0017#;
+   Group_Secp384r1_Wire     : constant Unsigned_16 := 16#0018#;
+   Group_X25519_Wire        : constant Unsigned_16 := 16#001D#;
+   Group_X25519MLKEM768_Wire : constant Unsigned_16 := 16#11EC#;
 
    type ECDHE_Group_Wire_Type is array (Maybe_ECDHE_Group) of Unsigned_16;
 
    ECDHE_Group_Wire : constant ECDHE_Group_Wire_Type :=
-     [Group_None      => 0,
-      Group_Secp256r1 => Group_Secp256r1_Wire,
-      Group_Secp384r1 => Group_Secp384r1_Wire,
-      Group_X25519    => Group_X25519_Wire];
+     [Group_None           => 0,
+      Group_Secp256r1      => Group_Secp256r1_Wire,
+      Group_Secp384r1      => Group_Secp384r1_Wire,
+      Group_X25519         => Group_X25519_Wire,
+      Group_X25519MLKEM768 => Group_X25519MLKEM768_Wire];
+
+   --  X25519MLKEM768 key-share layout (draft-ietf-tls-ecdhe-mlkem 3.1.3):
+   --  client share = ML-KEM-768 encapsulation key (1184) || X25519 public
+   --  key (32); server share = ML-KEM-768 ciphertext (1088) || X25519
+   --  public key (32); shared secret = ML-KEM shared secret (32) || X25519
+   --  shared secret (32). The ML-KEM part comes first in all three.
+   Hybrid_Client_Share_Len : constant N32 := 1184 + 32;
+   Hybrid_Server_Share_Len : constant N32 := 1088 + 32;
+   Hybrid_Shared_Len       : constant N32 := 32 + 32;
 
    ----------------------------------------------------------------------------
    --  Group_From_Wire
@@ -1685,10 +1708,24 @@ is
       Versions : Version_Policy := Allow_Both;  --  TLS version control
 
       --  Client: preferred initial TLS 1.3 key_share group. Group_None keeps
-      --  the default browser-like behavior: advertise X25519/P-256/P-384
-      --  in supported_groups and send an initial X25519 key_share. Set to
-      --  a specific Group if only advertising that particular one.
+      --  the default browser-like behavior: advertise X25519MLKEM768 (when
+      --  Offer_Post_Quantum), X25519, P-256 and P-384 in supported_groups
+      --  and send key_shares for the hybrid and X25519. Set to a specific
+      --  Group to advertise and share only that one.
       Client_Key_Share_Group : Maybe_ECDHE_Group := Group_None;
+
+      --  Post-quantum key exchange (X25519MLKEM768). Client: with the
+      --  default Client_Key_Share_Group, advertise it first in
+      --  supported_groups and send its key_share alongside X25519's, as
+      --  the browsers do; server: prefer it when the client offers it.
+      --  False restores the classical-only behaviour on both roles.
+      Offer_Post_Quantum : Boolean := True;
+      --  Client preference between the hybrid and X25519 when both are
+      --  offered: True lists X25519MLKEM768 first in supported_groups and
+      --  sends its key_share first (the browsers' order); False puts X25519
+      --  first and the hybrid last. A TLS 1.2-only client never offers the
+      --  hybrid (draft-ietf-tls-ecdhe-mlkem 3; BoGo TLS12ClientShouldNotOffer).
+      Post_Quantum_First : Boolean := True;
 
       --  Validation settings
       Verify_Mode    : Validation_Mode := Mode_WebPKI;
@@ -1980,6 +2017,16 @@ is
    subtype Session_ID_Length is N32 range 0 .. 32;
    subtype TLS12_Ticket_Buffer is Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1);
 
+   --  X25519MLKEM768 state. The client keeps its ML-KEM decapsulation key
+   --  and the X25519 private half; the server keeps the client's
+   --  encapsulation key until it has encapsulated; both keep the peer's
+   --  X25519 half and, on the client, the ciphertext until the secret is
+   --  derived. The ML-KEM key uses its own crate's byte types; conversion
+   --  happens at the boundary (same component and index base types).
+   subtype Hybrid_MLKEM_DK is MLKEM.ML_KEM_768.MLKEM_Decapsulation_Key;
+   subtype Hybrid_MLKEM_EK is MLKEM.ML_KEM_768.MLKEM_Encapsulation_Key;
+   subtype Hybrid_MLKEM_CT is MLKEM.ML_KEM_768.Ciphertext;
+
    type KE_State is record
       Negotiated : Boolean := False;
       Curve      : ECDHE_Group := Group_X25519;
@@ -1989,7 +2036,17 @@ is
       P256_PK    : P256_Peer_Key := (others => 0);
       P384_SK    : Bytes_48 := (others => 0);
       P384_PK    : P384_Peer_Key := (others => 0);
-      Shared     : Bytes_48 := (others => 0);
+      --  X25519MLKEM768: X25519 half (independent of Local_SK / Peer_PK,
+      --  which belong to the pure X25519 share) and the ML-KEM objects.
+      Hybrid_SK       : Bytes_32 := (others => 0);
+      Hybrid_Peer_PK  : Bytes_32 := (others => 0);
+      Hybrid_DK       : Hybrid_MLKEM_DK := (others => 0);
+      Hybrid_Peer_EK  : Hybrid_MLKEM_EK := (others => 0);
+      Hybrid_CT       : Hybrid_MLKEM_CT := (others => 0);
+      --  The shared secret: 32 bytes (X25519, P-256), 48 (P-384) or 64
+      --  (X25519MLKEM768), left-aligned; the key schedule takes the
+      --  slice its group defines.
+      Shared     : Bytes_64 := (others => 0);
    end record;
 
    --  TLS 1.2 session-ticket / resumption state machine (RFC 5077),
@@ -2140,6 +2197,7 @@ is
       Client_Has_X25519           : Boolean := False;
       Client_Has_P256             : Boolean := False;
       Client_Has_P384             : Boolean := False;
+      Client_Has_X25519MLKEM768   : Boolean := False;
       --  TLS 1.3 client sent the key_share extension at all. This is
       --  distinct from Client_Has_*: an empty key_share vector can be
       --  HRR-recoverable, while an absent key_share extension is a
@@ -2149,6 +2207,7 @@ is
       --  (may not have key_share data  triggers HRR if preferred)
       Client_Saw_Supported_Groups : Boolean := False;
       Client_Supports_X25519      : Boolean := False;
+      Client_Supports_X25519MLKEM768 : Boolean := False;
       Client_Supports_P256        : Boolean := False;
       Client_Supports_P384        : Boolean := False;
       --  Server-side: the ClientHello carried status_request (RFC 6066 8)
@@ -2582,7 +2641,11 @@ is
           and then (HC.Client_Has_P256 or else HC.Client_Supports_P256))
        or else
          (HC.KE.Curve = Group_Secp384r1
-          and then (HC.Client_Has_P384 or else HC.Client_Supports_P384)))
+          and then (HC.Client_Has_P384 or else HC.Client_Supports_P384))
+       or else
+         (HC.KE.Curve = Group_X25519MLKEM768
+          and then (HC.Client_Has_X25519MLKEM768
+                    or else HC.Client_Supports_X25519MLKEM768)))
    with Ghost;
 
    --  ----- RFC 8446 4.1.4 HelloRetryRequest at most once -----------

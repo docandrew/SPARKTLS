@@ -12,7 +12,7 @@ package SPARKTLS.Handshake.TLS13
 is
    pragma Unevaluated_Use_Of_Old (Allow);
 
-   Max_Server_Hello : constant := 256;
+   Max_Server_Hello : constant := 1536;   --  X25519MLKEM768 share: body up to 1212
 
    --  RFC 8446 4.1.3: SHA-256 ("HelloRetryRequest"), the Random value that
    --  marks a HelloRetryRequest. One definition for the server (the HRR

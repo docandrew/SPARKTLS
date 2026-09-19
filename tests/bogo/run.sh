@@ -184,8 +184,17 @@ UNSUPPORTED_SKIPS=(
   'ConflictingVersionNegotiation'
   # CBC ciphers (AEAD-only by design — RFC 7366 / Lucky13)
   '*_CBC_*' 'MaxCBCPadding' 'CBCRecordSplitting*'
-  # Post-quantum KEM hybrids are not implemented.
-  '*MLKEM*' '*Kyber*' 'PostQuantumNotEnabledByDefaultForAServer'
+  # Post-quantum: X25519MLKEM768 is implemented (draft-ietf-tls-ecdhe-mlkem)
+  # and on by default; pure MLKEM1024 (draft-ietf-tls-mlkem) and the
+  # pre-standard Kyber hybrid are not. The NotEnabledByDefault cases assert
+  # BoringSSL's opposite default policy.
+  '*MLKEM1024*' '*Kyber*' 'PostQuantumNotEnabledByDefaultForAServer'
+  'PostQuantumNotEnabledByDefaultInClients' 'TwoMLKEMs'
+  # ClientHelloPadding requires a 512-byte ClientHello (RFC 7685 F5 fix);
+  # with the hybrid share on by default ours is ~1.5 KB and needs no padding.
+  'ClientHelloPadding'
+  # BoringSSL's server-supported-groups hint API (key-share prediction).
+  'KeyShareWithServerHint-*'
   'CurveTest-Server-EqualPreference-TLS13'
   'KeyShareWithServerHint-OverridesExplicitKeyShare-TLS13'
   'KeyShareWithServerHint-OverridesExplicitEmptyKeyShare-TLS13'
@@ -227,10 +236,10 @@ UNSUPPORTED_SKIPS=(
   '*TicketCallback*' 'Server-DDoS-*'
   '*EarlyCallback*' '*SRTP*' '*TLSUnique*' 'TLS-HintMismatch-*'
   'Peek-*' 'ShimSendAlert-*'
-  # Post-quantum key exchange (X25519MLKEM768 etc.) is not implemented.
-  # These assert PQ is on by default, which is a policy decision we have
-  # not taken; they are not conformance failures.
-  'PostQuantum*' '*MLKEM*' '*Kyber*'
+  # Pure ML-KEM-1024 groups and the pre-standard Kyber hybrid are not
+  # implemented; the NotEnabledByDefault cases assert BoringSSL's default
+  # policy (post-quantum off), the opposite of ours.
+  'PostQuantum*' '*MLKEM1024*' '*Kyber*'
   # BoringSSL compliance profiles exercise policy knobs we do not expose.
   'Compliance-*'
   # Active GREASE emission is intentionally out of scope. SPARKTLS keeps

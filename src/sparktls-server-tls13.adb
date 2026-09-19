@@ -381,10 +381,12 @@ is
       S.HC.Client_Has_X25519 := False;
       S.HC.Client_Has_P256 := False;
       S.HC.Client_Has_P384 := False;
+      S.HC.Client_Has_X25519MLKEM768 := False;
       S.HC.Client_Saw_Supported_Groups := False;
       S.HC.Client_Supports_X25519 := False;
       S.HC.Client_Supports_P256 := False;
       S.HC.Client_Supports_P384 := False;
+      S.HC.Client_Supports_X25519MLKEM768 := False;
       S.HC.Client_Wants_Staple := False;
       S.HC.CH_Ext_Hash := 0;
       S.HC.CH_Ext_Count := 0;
@@ -1470,7 +1472,10 @@ is
       end if;
 
       --  Pick the server-preferred mutually supported group.
-      if S.HC.Client_Supports_X25519 then
+      if S.HC.Cfg.Offer_Post_Quantum and then S.HC.Client_Supports_X25519MLKEM768 then
+         HRR_Group := Group_X25519MLKEM768;
+         Preferred_Has_Share := S.HC.Client_Has_X25519MLKEM768;
+      elsif S.HC.Client_Supports_X25519 then
          HRR_Group := Group_X25519;
          Preferred_Has_Share := S.HC.Client_Has_X25519;
       elsif S.HC.Client_Supports_P256 then
@@ -1861,7 +1866,10 @@ is
                Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK.Value);
                if HC.KE.Curve = Group_Secp384r1 then
                   Key_Schedule.Derive_Handshake_Secret_384
-                    (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
+                    (HS_Secret, HC.KE.Shared (0 .. 47), Early);
+               elsif HC.KE.Curve = Group_X25519MLKEM768 then
+                  Key_Schedule.Derive_Handshake_Secret_384
+                    (HS_Secret, HC.KE.Shared (0 .. 63), Early);
                else
                   Key_Schedule.Derive_Handshake_Secret_384
                     (HS_Secret, HC.KE.Shared (0 .. 31), Early);
@@ -1891,7 +1899,10 @@ is
                Key_Schedule.Derive_Early_Secret (Early, Bytes_32 (HC.PSK.Value (0 .. 31)));
                if HC.KE.Curve = Group_Secp384r1 then
                   Key_Schedule.Derive_Handshake_Secret
-                    (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
+                    (HS_Secret, HC.KE.Shared (0 .. 47), Early);
+               elsif HC.KE.Curve = Group_X25519MLKEM768 then
+                  Key_Schedule.Derive_Handshake_Secret
+                    (HS_Secret, HC.KE.Shared (0 .. 63), Early);
                else
                   Key_Schedule.Derive_Handshake_Secret (HS_Secret, HC.KE.Shared (0 .. 31), Early);
                end if;

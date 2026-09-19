@@ -16,9 +16,12 @@ sparknacl = "^4.0.0"
 sparkx509 = "~0.0.1"
 [[depends-on]]
 sparktlscrypto = "~0.0.1"
+[[depends-on]]
+sparkmlkem = "~0.0.1"
 [[pins]]
 sparkx509 = { path='../sparkx509' }
 sparktlscrypto = { path='../sparktlscrypto' }
+sparkmlkem = { path='../sparkmlkem' }
 
 [build-switches]
 #  Ada 2022 is required for postconditions on access-to-subprogram types

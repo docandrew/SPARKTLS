@@ -131,6 +131,7 @@ is
          when Group_Secp256r1_Wire => return Group_Secp256r1;
          when Group_Secp384r1_Wire => return Group_Secp384r1;
          when Group_X25519_Wire    => return Group_X25519;
+         when Group_X25519MLKEM768_Wire => return Group_X25519MLKEM768;
          when others               => return Group_None;
       end case;
    end;
@@ -547,6 +548,10 @@ is
       HC.KE.Local_SK := (others => 0);
       HC.KE.P256_SK := (others => 0);
       HC.KE.P384_SK := (others => 0);
+      --  X25519MLKEM768: the X25519 private half and the ML-KEM
+      --  decapsulation key (the ciphertext and peer keys are public)
+      HC.KE.Hybrid_SK := (others => 0);
+      HC.KE.Hybrid_DK := (others => 0);
       --  Key schedule
       HC.Client_HS_Secret := (others => 0);
       HC.Server_HS_Secret := (others => 0);

@@ -17,6 +17,7 @@ with SPARKTLSCrypto.P256.ECDSA;
 with Dudect_Helpers;
 
 procedure Dudect_P256_ECDSA is
+   Blind40_Test : constant Byte_Seq (0 .. 39) := (others => 16#7E#);   --  fixed blinding for tests
    Hash : constant Bytes_32 := (others => 16#42#);
    D    : constant SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half :=
      (others => 16#33#);
@@ -39,7 +40,7 @@ procedure Dudect_P256_ECDSA is
    Cur : access SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;   --  class picks the nonce; one code path
    procedure Sign_Cur is
    begin
-      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, Cur.all, R, S, OK);
+      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, Cur.all, Blind40_Test, R, S, OK);
    end Sign_Cur;
    procedure Sub_0 is
    begin

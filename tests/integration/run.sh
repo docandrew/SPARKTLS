@@ -147,7 +147,7 @@ for cert_name in rsa rsa2056 ed25519 p256 p384; do
     [ -f "$cert" ] || continue
 
     for suite in TLS_AES_128_GCM_SHA256 TLS_CHACHA20_POLY1305_SHA256 TLS_AES_256_GCM_SHA384; do
-        for group in x25519 P-256 P-384; do
+        for group in x25519 P-256 P-384 X25519MLKEM768; do
             cleanup
             "$SERVER" "$cert" "$key" 2>/dev/null &
             sleep 1
@@ -206,6 +206,42 @@ for cert_name in rsa rsa2056 ed25519 p256 p384; do
         fi
     done
 done
+
+echo ""
+
+# X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem): the OpenSSL server accepts
+# only the hybrid group, so success means our client offered it, decapsulated
+# the server's ciphertext and derived the 64-byte hybrid secret. OpenSSL 3.6's
+# default group list already leads with X25519MLKEM768, so the loop above
+# exercises the same path; this pins it explicitly.
+echo "--- TLS 1.3 X25519MLKEM768: SPARKTLS client → OpenSSL server (hybrid only) ---"
+cleanup
+openssl s_server -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+    -accept $PORT -tls1_3 -groups X25519MLKEM768 -www 2>/dev/null &
+sleep 1
+output=$(timeout 10 "$FETCH" --cafile "$CERT_DIR/rsa.crt" --rfc5280 "https://localhost:$PORT/" 2>&1 || true)
+cleanup
+if echo "$output" | grep -qi "HTTP/1\|200\|html"; then
+    pass "Client X25519MLKEM768 (hybrid-only server)"
+else
+    fail "Client X25519MLKEM768 (hybrid-only server)"
+    echo "    $(echo "$output" | head -1)"
+fi
+
+# Our server, OpenSSL client offering the hybrid alone (no classical group).
+echo "--- TLS 1.3 X25519MLKEM768: OpenSSL client (hybrid only) → SPARKTLS server ---"
+cleanup
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" 2>/dev/null &
+sleep 1
+output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 \
+    -groups X25519MLKEM768 2>&1 || true)
+cleanup
+if echo "$output" | grep -q "Negotiated TLS1.3 group: X25519MLKEM768"; then
+    pass "Server X25519MLKEM768 (hybrid-only client)"
+else
+    fail "Server X25519MLKEM768 (hybrid-only client)"
+    echo "    $(echo "$output" | grep -i "error\|alert" | head -1)"
+fi
 
 echo ""
 

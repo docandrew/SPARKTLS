@@ -167,7 +167,7 @@ package body CSR_Builder is
                SPARKTLSCrypto.RFC6979.Derive_K_P256
                  (Bytes_32 (D), Bytes_32 (H), K, OK);
                if OK then
-                  SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
+                  SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K), Byte_Seq'(0 .. 39 => 16#7E#),
                                              R_Out, S_Out, OK);
                end if;
                if OK then

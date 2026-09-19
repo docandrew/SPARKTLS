@@ -653,7 +653,7 @@ package body Cert_Builder is
                   SPARKTLSCrypto.RFC6979.Derive_K_P256
                     (Bytes_32 (D), Bytes_32 (H), K, Sig_OK);
                   if not Sig_OK then return; end if;
-SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
+SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K), Byte_Seq'(0 .. 39 => 16#7E#),
                                              R_Out, S_Out, Sig_OK);
                   if not Sig_OK then return; end if;
 

@@ -1057,7 +1057,12 @@ is
             begin
                P256_Decode (Pt, HC.KE.P256_PK, V);
                if V /= 0 then
-                  P256_Mul (Pt, HC.KE.P256_SK, 32);
+                  declare
+                     Blind : Byte_Seq (0 .. 39);   --  SR-62
+                  begin
+                     Gen (Blind);
+                     P256_Mul_Blinded (Pt, HC.KE.P256_SK, Blind);
+                  end;
                   P256_To_Affine (Pt);
                   declare
                      E : Byte_Seq (0 .. 64);
@@ -1081,7 +1086,8 @@ is
             begin
                SPARKTLSCrypto.P384.Point.P384_ECDHE (SS, OK384, HC.KE.P384_SK, HC.KE.P384_PK);
                if OK384 then
-                  HC.KE.Shared := SS;
+                  HC.KE.Shared := (others => 0);
+                  HC.KE.Shared (0 .. 47) := SS;
                   OK := True;
                   Err := No_Error;
                else

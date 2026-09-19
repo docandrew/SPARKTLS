@@ -108,9 +108,10 @@ is
    --  RFC 8422 5.4: ECPoint byte length for a given group.
    type Point_Len_For_Group_Type is array (ECDHE_Group) of N32;
    Point_Len_For_Group : constant Point_Len_For_Group_Type := [
-      Group_Secp256r1 => P256_Point_Len,
-      Group_Secp384r1 => P384_Point_Len,
-      Group_X25519    => X25519_Point_Len
+      Group_Secp256r1      => P256_Point_Len,
+      Group_Secp384r1      => P384_Point_Len,
+      Group_X25519         => X25519_Point_Len,
+      Group_X25519MLKEM768 => 0   --  TLS 1.3 only; never negotiated here
    ];
 
    --  RFC 8422 5.4: ServerKeyExchange params size (before signature).
