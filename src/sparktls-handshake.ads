@@ -61,6 +61,65 @@ is
        and DER_Out'Last >= Max_ECDSA_DER_Len - 1,
      Post => DER_Len <= Max_ECDSA_DER_Len;
 
+   ----------------------------------------------------------------------------
+   --  External signing (Config.Sign), shared by the TLS 1.3 and 1.2
+   --  builders. See the Sign_Fn documentation in SPARKTLS.
+   ----------------------------------------------------------------------------
+
+   Empty_Message : constant Byte_Seq (1 .. 0) := (others => 0);
+
+   --  Schemes a TLS 1.3 CertificateVerify may carry; TLS 1.2 also allows
+   --  PKCS#1 v1.5.
+   function Valid_TLS13_Scheme (S : Maybe_Sig_Scheme) return Boolean
+   is (S in Sig_ECDSA_P256_SHA256 | Sig_ECDSA_P384_SHA384
+           | Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
+           | Sig_Ed25519);
+   function Valid_TLS12_Scheme (S : Maybe_Sig_Scheme) return Boolean
+   is (Valid_TLS13_Scheme (S)
+       or else S in Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512);
+
+   --  Hash (Message) under the hash the scheme names. Digest_Len is 0 for
+   --  Ed25519 (PureEdDSA signs the message) and for schemes with no hash.
+   procedure Scheme_Digest
+     (Scheme     : in     Maybe_Sig_Scheme;
+      Message    : in     Byte_Seq;
+      Digest     :    out Byte_Seq;
+      Digest_Len :    out N32)
+   with
+     Pre  => Message'First = 0
+             and then Message'Length in 1 .. 4096
+             and then Digest'First = 0
+             and then Digest'Last = 63,
+     Post => Digest_Len in 0 | 32 | 48 | 64;
+
+   --  Ask the application's signer for a signature and check the shape of
+   --  what comes back. The scheme is validated BEFORE the callback runs, so
+   --  a request the site could not use never reaches an HSM. The caller
+   --  then verifies the signature against the identity's public key; nothing
+   --  reaches the wire unverified. The local key fields are never read.
+   procedure Invoke_Signer
+     (Sign       : in     Sign_Fn;
+      Id         : in     Identity;
+      Scheme     : in     Maybe_Sig_Scheme;
+      For_TLS13  : in     Boolean;
+      Message    : in     Byte_Seq;
+      Digest     : in     Byte_Seq;
+      Digest_Len : in     N32;
+      Sig        :    out Byte_Seq;
+      Sig_Len    :    out N32;
+      Sig_OK     :    out Boolean)
+   with
+     Pre  => Sign /= null
+             and then Digest'First = 0
+             and then Digest'Last = 63
+             and then Digest_Len in 0 | 32 | 48 | 64
+             and then Sig'First = 0
+             and then Sig'Length in 512 .. 1024,
+     Post => (if Sig_OK then
+                Sig_Len in 1 .. Sig'Length
+                and then (if For_TLS13 then Valid_TLS13_Scheme (Scheme)
+                          else Valid_TLS12_Scheme (Scheme)));
+
    --  Pick a TLS sig-algo wire code that is (a) acceptable to the
    --  server (appears in Sig_Algs as a 2-byte big-endian list) and
    --  (b) compatible with our cert key type. Walks the server's list

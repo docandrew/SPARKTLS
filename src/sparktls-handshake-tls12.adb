@@ -442,108 +442,6 @@ is
       Params_Len := 4 + Pt_Len;
    end Fill_SKE_Params;
 
-   ----------------------------------------------------------------------------
-   --  External signer support, shared by the
-   --  ServerKeyExchange and CertificateVerify builders.
-   ----------------------------------------------------------------------------
-
-   Empty_Message : constant Byte_Seq (1 .. 0) := (others => 0);
-
-   --  Hash (Message) under the hash the scheme names; Digest_Len 0 for
-   --  Ed25519 (PureEdDSA signs the message) and for schemes with no hash.
-   procedure Digest_For_12
-     (Scheme     : in     Maybe_Sig_Scheme;
-      Message    : in     Byte_Seq;
-      Digest     :    out Byte_Seq;
-      Digest_Len :    out N32)
-   with
-     Pre  => Message'First = 0
-             and then Message'Length in 1 .. 4096
-             and then Digest'First = 0
-             and then Digest'Last = 63,
-     Post => Digest_Len in 0 | 32 | 48 | 64
-   is
-   begin
-      Digest := (others => 0);
-      case Scheme is
-         when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PSS_SHA256 | Sig_ECDSA_P256_SHA256 =>
-            Digest (0 .. 31) := Byte_Seq (SPARKTLSCrypto.Hashing.SHA256.Hash (Message));
-            Digest_Len := 32;
-         when Sig_RSA_PKCS1_SHA384 | Sig_RSA_PSS_SHA384 | Sig_ECDSA_P384_SHA384 =>
-            Digest (0 .. 47) := Byte_Seq (SPARKNaCl.Hashing.SHA384.Hash (Message));
-            Digest_Len := 48;
-         when Sig_RSA_PKCS1_SHA512 | Sig_RSA_PSS_SHA512 =>
-            Digest (0 .. 63) := Byte_Seq (SPARKNaCl.Hashing.SHA512.Hash (Message));
-            Digest_Len := 64;
-         when others =>
-            Digest_Len := 0;
-      end case;
-   end Digest_For_12;
-
-   --  Call the application's signer and check the shape of what comes
-   --  back. The caller then verifies the signature against the identity's
-   --  public key (Cert_Verify.Verify_Signature_TLS12 for a message,
-   --  Verify_Signature_TLS12_Hashed for a transcript digest); nothing
-   --  reaches the wire unverified. The local key fields are never read.
-   procedure External_Sign_12
-     (Sign       : in     Sign_Fn;
-      Scheme     : in     Maybe_Sig_Scheme;
-      Message    : in     Byte_Seq;
-      Digest     : in     Byte_Seq;
-      Digest_Len : in     N32;
-      Id         : in     Identity;
-      Sig        :    out Byte_Seq;
-      Sig_Len    :    out N32;
-      Sig_OK     :    out Boolean)
-   with
-     Pre  => Sign /= null
-             and then Digest'First = 0
-             and then Digest'Last = 63
-             and then Digest_Len in 0 | 32 | 48 | 64
-             and then Sig'First = 0
-             and then Sig'Last = Max_Sig - 1,
-     Post => (if Sig_OK then Sig_Len in 1 .. Max_Sig)
-   is
-      Status : Sign_Status;
-      S_Len  : N32;
-   begin
-      Sig := (others => 0);
-      Sig_Len := 0;
-      Sig_OK := False;
-      if Digest_Len > 0 then
-         Sign.all (Scheme, Message, Digest (0 .. Digest_Len - 1), Sig, S_Len, Status);
-      else
-         Sign.all (Scheme, Message, Digest (1 .. 0), Sig, S_Len, Status);
-      end if;
-      if Status /= Signed or else S_Len = 0 or else S_Len > Sig'Length then
-         Sig := (others => 0);
-         return;
-      end if;
-      case Scheme is
-         when Sig_Ed25519 =>
-            if S_Len /= 64 then
-               Sig := (others => 0);
-               return;
-            end if;
-         when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512
-            | Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
-            if S_Len /= Id.RSA_Mod_Len then
-               Sig := (others => 0);
-               return;
-            end if;
-         when Sig_ECDSA_P256_SHA256 | Sig_ECDSA_P384_SHA384 =>
-            if S_Len > Max_ECDSA_DER_Len then
-               Sig := (others => 0);
-               return;
-            end if;
-         when others =>
-            Sig := (others => 0);
-            return;
-      end case;
-      Sig_Len := S_Len;
-      Sig_OK := True;
-   end External_Sign_12;
-
    procedure Build_Server_Key_Exchange
      (HC     : in Handshake_Context;
       Id     : in Identity;
@@ -622,10 +520,10 @@ is
                Digest     : Byte_Seq (0 .. 63);
                Digest_Len : N32;
             begin
-               Digest_For_12 (HC.Negotiated_Sig_Algo, Sig_Input (0 .. Sig_Input_Len - 1), Digest, Digest_Len);
-               External_Sign_12
-                 (Sign, HC.Negotiated_Sig_Algo, Sig_Input (0 .. Sig_Input_Len - 1),
-                  Digest, Digest_Len, Id, Sig, Sig_Len, Sig_OK);
+               Scheme_Digest (HC.Negotiated_Sig_Algo, Sig_Input (0 .. Sig_Input_Len - 1), Digest, Digest_Len);
+               Invoke_Signer
+                 (Sign, Id, HC.Negotiated_Sig_Algo, False, Sig_Input (0 .. Sig_Input_Len - 1),
+                  Digest, Digest_Len, Sig, Sig_Len, Sig_OK);
                if Sig_OK
                  and then not SPARKTLS.Cert_Verify.Verify_Signature_TLS12
                                 (Sig_Input (0 .. Sig_Input_Len - 1), Sig (0 .. Sig_Len - 1),
@@ -1443,8 +1341,8 @@ is
                return;
             end if;
             Digest (0 .. D_Len - 1) := Transcript_Hash;
-            External_Sign_12
-              (Sign, Sig_Algo_Wire, Empty_Message, Digest, D_Len, Id, Sig, Sig_Len, Sig_OK);
+            Invoke_Signer
+              (Sign, Id, Sig_Algo_Wire, False, Empty_Message, Digest, D_Len, Sig, Sig_Len, Sig_OK);
             if Sig_OK then
                declare
                   H256 : Bytes_32 := (others => 0);

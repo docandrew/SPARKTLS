@@ -1263,9 +1263,8 @@ is
       Content_Len := 98 + H_Len;
    end Build_CV_Content;
 
-   --  Wire enumeration for the TLS 1.3 CertificateVerify schemes. Schemes
-   --  that are not valid there (PKCS#1 v1.5, Scheme_None) are rejected by
-   --  the signing paths before this value is ever used.
+   --  Wire enumeration for the TLS 1.3 CertificateVerify schemes; only
+   --  called once a signature exists, so the scheme is one of the six.
    function To_Wire_Enum_13
      (S : Maybe_Sig_Scheme) return RFLX.Tls_Parameters.TLS_SignatureScheme_Enum
    is (case S is
@@ -1274,90 +1273,8 @@ is
          when Sig_RSA_PSS_SHA256    => RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256,
          when Sig_RSA_PSS_SHA384    => RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384,
          when Sig_RSA_PSS_SHA512    => RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512,
-         when others                => RFLX.Tls_Parameters.Ed25519_0807);
-
-   ----------------------------------------------------------------------------
-   --  External signer path. Hands the RFC 8446 4.4.3
-   --  content and its digest to the application's callback, then verifies
-   --  the returned signature against the identity's public key before it
-   --  can reach the wire: a broken or misconfigured signer fails here with
-   --  a local error instead of an opaque peer abort. The local key fields
-   --  are never read on this path.
-   ----------------------------------------------------------------------------
-   procedure External_Sign_13
-     (Sign    : in     Sign_Fn;
-      Scheme  : in     Maybe_Sig_Scheme;
-      Content : in     Byte_Seq;
-      Id      : in     Identity;
-      Sig     :    out Byte_Seq;
-      Sig_Len :    out N32;
-      Sig_OK  :    out Boolean)
-   with
-     Pre  => Sign /= null
-             and then Content'First = 0
-             and then Content'Length in 1 .. Max_CV_Content
-             and then Sig'First = 0
-             and then Sig'Last = 511,
-     Post => (if Sig_OK then Sig_Len in 1 .. 512)
-   is
-      Digest     : Byte_Seq (0 .. 63) := (others => 0);
-      Digest_Len : N32 := 0;
-      Status     : Sign_Status;
-      S_Len      : N32;
-   begin
-      Sig := (others => 0);
-      Sig_Len := 0;
-      Sig_OK := False;
-      case Scheme is
-         when Sig_ECDSA_P256_SHA256 | Sig_RSA_PSS_SHA256 =>
-            Digest (0 .. 31) := Byte_Seq (SPARKTLSCrypto.Hashing.SHA256.Hash (Content));
-            Digest_Len := 32;
-         when Sig_ECDSA_P384_SHA384 | Sig_RSA_PSS_SHA384 =>
-            Digest (0 .. 47) := Byte_Seq (SPARKNaCl.Hashing.SHA384.Hash (Content));
-            Digest_Len := 48;
-         when Sig_RSA_PSS_SHA512 =>
-            Digest (0 .. 63) := Byte_Seq (SPARKNaCl.Hashing.SHA512.Hash (Content));
-            Digest_Len := 64;
-         when Sig_Ed25519 =>
-            Digest_Len := 0;   --  PureEdDSA signs the message itself
-         when others =>
-            return;            --  not a TLS 1.3 CertificateVerify scheme
-      end case;
-      if Digest_Len > 0 then
-         Sign.all (Scheme, Content, Digest (0 .. Digest_Len - 1), Sig, S_Len, Status);
-      else
-         Sign.all (Scheme, Content, Digest (1 .. 0), Sig, S_Len, Status);
-      end if;
-      if Status /= Signed or else S_Len = 0 or else S_Len > Sig'Length then
-         Sig := (others => 0);
-         return;
-      end if;
-      --  Shape by scheme, then the check that matters: the signature must
-      --  verify under the certificate's public key.
-      case Scheme is
-         when Sig_Ed25519 =>
-            if S_Len /= 64 then
-               Sig := (others => 0);
-               return;
-            end if;
-         when Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
-            if S_Len /= Id.RSA_Mod_Len then
-               Sig := (others => 0);
-               return;
-            end if;
-         when others =>
-            if S_Len > Max_ECDSA_DER_Len then
-               Sig := (others => 0);
-               return;
-            end if;
-      end case;
-      if not SPARKTLS.Cert_Verify.Verify_Signature (Content, Sig (0 .. S_Len - 1), Id.Cert, Scheme) then
-         Sig := (others => 0);
-         return;
-      end if;
-      Sig_Len := S_Len;
-      Sig_OK := True;
-   end External_Sign_13;
+         when others                => RFLX.Tls_Parameters.Ed25519_0807)
+   with Pre => Valid_TLS13_Scheme (S);
 
    procedure Build_Certificate_Verify
      (Transcript_Hash : in Byte_Seq;
@@ -1385,11 +1302,25 @@ is
       Len := 0;
 
       Build_CV_Content (Transcript_Hash, Role, Content, Content_Len);
-      Algo_Enum := To_Wire_Enum_13 (Sig_Algo_Wire);
       if Sign /= null then
-         --  External signer: the callback signs, the
-         --  library verifies, the local key fields are never read.
-         External_Sign_13 (Sign, Sig_Algo_Wire, Content (0 .. Content_Len - 1), Id, Sig, Sig_Len, Sig_OK);
+         --  External signer: the callback signs, the library verifies the
+         --  signature over exactly these bytes, the key fields are never read.
+         declare
+            Digest : Byte_Seq (0 .. 63);
+            D_Len  : N32;
+         begin
+            Scheme_Digest (Sig_Algo_Wire, Content (0 .. Content_Len - 1), Digest, D_Len);
+            Invoke_Signer (Sign, Id, Sig_Algo_Wire, True, Content (0 .. Content_Len - 1),
+                           Digest, D_Len, Sig, Sig_Len, Sig_OK);
+            if Sig_OK
+              and then not SPARKTLS.Cert_Verify.Verify_Signature
+                             (Content (0 .. Content_Len - 1), Sig (0 .. Sig_Len - 1), Id.Cert, Sig_Algo_Wire)
+            then
+               Sig := (others => 0);
+               Sig_Len := 0;
+               Sig_OK := False;
+            end if;
+         end;
       elsif not Id.Has_Private_Key then
          --  Public-only identity (Set_Identity_Public) and no callback:
          --  refuse rather than sign with the all-zero key fields.
@@ -1397,7 +1328,6 @@ is
       else
       case Sig_Algo_Wire is
          when Sig_Ed25519 =>
-            Algo_Enum := RFLX.Tls_Parameters.Ed25519_0807;
             Sig_Len := 64;
             declare
                SM_Len : constant N32 := 64 + Content_Len;
@@ -1411,7 +1341,6 @@ is
             end;
 
          when Sig_ECDSA_P256_SHA256 =>
-            Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
                H              : constant Digest := Hash (Content (0 .. Content_Len - 1));
@@ -1450,7 +1379,6 @@ is
             end;
 
          when Sig_ECDSA_P384_SHA384 =>
-            Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp384r1_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
                H       : constant Digest := Hash (Content (0 .. Content_Len - 1));
@@ -1479,7 +1407,6 @@ is
             end;
 
          when Sig_RSA_PSS_SHA256 =>
-            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
@@ -1505,7 +1432,6 @@ is
             end;
 
          when Sig_RSA_PSS_SHA384 =>
-            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
@@ -1531,7 +1457,6 @@ is
             end;
 
          when Sig_RSA_PSS_SHA512 =>
-            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512;
             declare
                use SPARKNaCl.Hashing.SHA512;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
@@ -1568,6 +1493,7 @@ is
       if not Sig_OK or else Sig_Len = 0 then
          return;
       end if;
+      Algo_Enum := To_Wire_Enum_13 (Sig_Algo_Wire);
 
       declare
          Body_Len : constant N32 := 4 + Sig_Len;

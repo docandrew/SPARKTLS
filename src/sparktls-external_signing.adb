@@ -23,8 +23,5 @@ is
          Handshake.ECDSA_To_DER (R_Half, S_Half, Half_Len, DER_Out, DER_Len);
       end;
       OK := DER_Len > 0;
-      if not OK then
-         DER_Len := 0;
-      end if;
    end ECDSA_Raw_To_DER;
 end SPARKTLS.External_Signing;

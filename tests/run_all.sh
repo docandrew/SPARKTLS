@@ -237,8 +237,10 @@ if echo "$SUITES" | grep -q "unit"; then
     mapfile -t UNIT_MAINS < <(grep -oE '"test_[a-z0-9_]+\.adb"' tests/unit/unit_tests.gpr | tr -d '"' | sed 's/\.adb$//')
     for t in "${UNIT_MAINS[@]}"; do
         case "$t" in
-            test_ocsp_staple|test_external_sign)
+            test_ocsp_staple)
                 run_unit "$t" bin/tests/$t tests/certs/p256.crt tests/certs/p256.key ;;
+            test_external_sign)
+                run_unit "$t" bin/tests/$t tests/certs/p256.crt tests/certs/p256.key tests/certs/rsa.crt tests/certs/rsa.key ;;
             test_rsa_crt)
                 for kp in "tests/certs/rsa.crt tests/certs/rsa.key" \
                           "tests/certs/rsa2056.crt tests/certs/rsa2056.key" \

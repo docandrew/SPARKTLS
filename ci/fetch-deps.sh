@@ -43,7 +43,7 @@ SPARKMLKEM_REF="${SPARKMLKEM_REF:-429bdd71de0ce3bc14db46ef3fc6d755bd340569}"   #
 #  (tls_yubikey_server, piv_signer) withs sparkpiv_linux.gpr. Library code
 #  never depends on it.
 SPARKPIV_URL="https://github.com/docandrew/sparkpiv.git"
-SPARKPIV_REF="${SPARKPIV_REF:-e86a4822c0794b4c145cfcfc06a7a4a804a6b684}"   # main 2026-09-20, PIV.CCID layer (needed by the examples)
+SPARKPIV_REF="${SPARKPIV_REF:-bf2c38662aafa02ff6b358f43606038b23f82457}"   # main 2026-09-20, review fixes merged
 
 # Needed by examples/ (pinned ../../sparkentropy). Without it the examples
 # build fails and tls_fetch / tls_blocking_server never exist -- which the

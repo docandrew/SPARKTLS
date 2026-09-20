@@ -21,7 +21,8 @@ package Software_Signer is
    --  The SPARKTLS.Sign_Fn. Signs Message or Digest as the scheme needs
    --  and returns the signature as TLS carries it.
    procedure Sign
-     (Scheme  : in     Maybe_Sig_Scheme;
+     (Id      : in     Identity;
+      Scheme  : in     Maybe_Sig_Scheme;
       Message : in     Byte_Seq;
       Digest  : in     Byte_Seq;
       Sig     :    out Byte_Seq;

@@ -151,10 +151,12 @@
               go
               iproute2
               openssl
-              #  YubiKey / PIV example: the smart-card daemon and CCID driver
-              #  (run pcscd from this shell: pcscd --foreground), pcsc-lite's
-              #  client library the example links, and Yubico's tool for
-              #  provisioning the slot (libykcs11 comes with it).
+              #  YubiKey / PIV: the examples talk to the token directly over
+              #  /dev/bus/usb (sparkpiv) and need NO pcscd. These are for
+              #  provisioning only: yubico-piv-tool (generate/import into a
+              #  slot) needs a pcscd, which can be run from this shell as the
+              #  user (pcscd --foreground --disable-polkit, with /run/pcscd
+              #  writable) and must be stopped again before the examples run.
               pcsclite
               ccid
               yubico-piv-tool

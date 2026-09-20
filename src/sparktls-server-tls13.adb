@@ -1413,9 +1413,7 @@ is
       if S.HC.Negotiated_Sig_Algo in Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
         and then (Cfg.Local.RSA_Mod_Len not in 64 .. 512)
       then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
+         Send_Alert_And_Error (S, Internal_Error, Result);
          return;
       end if;
       Handshake.TLS13.Build_Certificate_Verify
@@ -1430,9 +1428,12 @@ is
          Len             => CV_Len);
 
       if CV_Len = 0 then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
+         --  The signature failed closed (external signer refused or was
+         --  rejected by verify-before-wire, or a local fault check fired).
+         --  The whole flight is still unpublished, so the peer has seen
+         --  nothing: drop it and send a plaintext internal_error it can
+         --  read, rather than an encrypted alert under keys it never got.
+         Send_Alert_And_Error (S, Internal_Error, Result);
          return;
       end if;
 

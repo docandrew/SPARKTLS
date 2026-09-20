@@ -1,4 +1,7 @@
 with Interfaces;           use Interfaces;
+with SPARKTLSCrypto.Hashing.SHA256;
+with SPARKNaCl.Hashing.SHA384;
+with SPARKNaCl.Hashing.SHA512;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.RFLX_Borrow;
 with RFLX.TLS_Handshake.TLS_Handshake;
@@ -225,5 +228,79 @@ is
 
       return Scheme_None;
    end Pick_Sig_Algo_With_Prefs;
+
+   procedure Scheme_Digest
+     (Scheme     : in     Maybe_Sig_Scheme;
+      Message    : in     Byte_Seq;
+      Digest     :    out Byte_Seq;
+      Digest_Len :    out N32)
+   is
+   begin
+      Digest := (others => 0);
+      case Scheme is
+         when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PSS_SHA256 | Sig_ECDSA_P256_SHA256 =>
+            Digest (0 .. 31) := Byte_Seq (SPARKTLSCrypto.Hashing.SHA256.Hash (Message));
+            Digest_Len := 32;
+         when Sig_RSA_PKCS1_SHA384 | Sig_RSA_PSS_SHA384 | Sig_ECDSA_P384_SHA384 =>
+            Digest (0 .. 47) := Byte_Seq (SPARKNaCl.Hashing.SHA384.Hash (Message));
+            Digest_Len := 48;
+         when Sig_RSA_PKCS1_SHA512 | Sig_RSA_PSS_SHA512 =>
+            Digest (0 .. 63) := Byte_Seq (SPARKNaCl.Hashing.SHA512.Hash (Message));
+            Digest_Len := 64;
+         when others =>
+            Digest_Len := 0;
+      end case;
+   end Scheme_Digest;
+
+   procedure Invoke_Signer
+     (Sign       : in     Sign_Fn;
+      Id         : in     Identity;
+      Scheme     : in     Maybe_Sig_Scheme;
+      For_TLS13  : in     Boolean;
+      Message    : in     Byte_Seq;
+      Digest     : in     Byte_Seq;
+      Digest_Len : in     N32;
+      Sig        :    out Byte_Seq;
+      Sig_Len    :    out N32;
+      Sig_OK     :    out Boolean)
+   is
+      Status : Sign_Status;
+      S_Len  : N32;
+   begin
+      Sig := (others => 0);
+      Sig_Len := 0;
+      Sig_OK := False;
+      --  Validate first: a scheme this site cannot carry never reaches the
+      --  signer (no PIN prompt, retry-counter hit or audit entry for it).
+      if (if For_TLS13 then not Valid_TLS13_Scheme (Scheme) else not Valid_TLS12_Scheme (Scheme)) then
+         return;
+      end if;
+      Sign.all (Id, Scheme, Message, Digest (0 .. Digest_Len - 1), Sig, S_Len, Status);
+      if Status /= Signed or else S_Len = 0 or else S_Len > Sig'Length then
+         Sig := (others => 0);
+         return;
+      end if;
+      --  Shape by scheme. The caller's verification is the real check.
+      case Scheme is
+         when Sig_Ed25519 =>
+            if S_Len /= 64 then
+               Sig := (others => 0);
+               return;
+            end if;
+         when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512
+            | Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
+            if S_Len /= Id.RSA_Mod_Len then
+               Sig := (others => 0);
+               return;
+            end if;
+         when others =>   --  ECDSA
+            if S_Len > Max_ECDSA_DER_Len then
+               Sig := (others => 0);
+               return;
+            end if;
+      end case;
+      Sig_Len := S_Len;
+      Sig_OK := True;
+   end Invoke_Signer;
 
 end SPARKTLS.Handshake;
