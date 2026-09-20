@@ -39,6 +39,12 @@ SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-c47b947c69551e40914f0f16935886234eeb00
 SPARKMLKEM_URL="https://github.com/docandrew/sparkmlkem.git"
 SPARKMLKEM_REF="${SPARKMLKEM_REF:-429bdd71de0ce3bc14db46ef3fc6d755bd340569}"   # master 2026-09-19, initial import
 
+#  SPARK PIV client + Linux usbfs CCID transport; the examples project
+#  (tls_yubikey_server, piv_signer) withs sparkpiv_linux.gpr. Library code
+#  never depends on it.
+SPARKPIV_URL="https://github.com/docandrew/sparkpiv.git"
+SPARKPIV_REF="${SPARKPIV_REF:-e86a4822c0794b4c145cfcfc06a7a4a804a6b684}"   # main 2026-09-20, PIV.CCID layer (needed by the examples)
+
 # Needed by examples/ (pinned ../../sparkentropy). Without it the examples
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
 # integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
@@ -62,6 +68,7 @@ clone_at "$SPARKX509_URL"      "$SPARKX509_REF"      "sparkx509"
 clone_at "$SPARKTLSCRYPTO_URL" "$SPARKTLSCRYPTO_REF" "sparktlscrypto"
 clone_at "$SPARKENTROPY_URL"   "$SPARKENTROPY_REF"   "sparkentropy"
 clone_at "$SPARKMLKEM_URL"     "$SPARKMLKEM_REF"     "sparkmlkem"
+clone_at "$SPARKPIV_URL"       "$SPARKPIV_REF"       "sparkpiv"
 
 # sparknacl comes from the Alire index (sparknacl ^4.0.0 -> 4.0.1), not from a
 # sibling clone: its git manifest pins gnatprove ^14.1.1, which no release of

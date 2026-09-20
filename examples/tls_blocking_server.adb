@@ -19,6 +19,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
+with Software_Signer;
 with SPARKTLS.Tickets;
 with Entropy_Random;
 
@@ -32,6 +33,10 @@ procedure TLS_Blocking_Server is
    Roots   : aliased SPARKTLS.Trust_Store;
    MTLS    : Boolean := False;
    MTLS_Require : Boolean := False;
+   --  --external-sign: the TLS side holds a public-only identity and every
+   --  handshake signature goes through Software_Signer,
+   --  standing in for a YubiKey, TPM, HSM or separate signing process.
+   External_Sign : Boolean := False;
 
    --  TLS 1.2 ticket encryption keys (RFC 5077). One TEK generated
    --  at startup with a fixed Key_ID; rotates only on restart.
@@ -243,6 +248,8 @@ procedure TLS_Blocking_Server is
                                   else null),
           Request_Client_Cert => MTLS,
           Require_Client_Cert => MTLS_Require,
+          Sign                => (if External_Sign
+                                  then Software_Signer.Sign'Access else null),
           Get_Active_TEK      =>
             SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
           Get_TEK_By_Id       =>
@@ -420,7 +427,7 @@ begin
 
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &
-                " [--mtls <ca.pem>] [--staple <ocsp.der>]");
+                " [--mtls <ca.pem>] [--staple <ocsp.der>] [--external-sign]");
       return;
    end if;
 
@@ -432,6 +439,30 @@ begin
    if not Id_OK then
       Put_Line ("Failed to load identity");
       return;
+   end if;
+
+   --  --external-sign (any position): hand the private key to the signer
+   --  and reload the identity from the certificate alone, so the TLS side
+   --  provably holds no key material.
+   for I in 3 .. Ada.Command_Line.Argument_Count loop
+      if Ada.Command_Line.Argument (I) = "--external-sign" then
+         External_Sign := True;
+      end if;
+   end loop;
+   if External_Sign then
+      declare
+         S_OK, P_OK : Boolean;
+      begin
+         Software_Signer.Init
+           (Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), S_OK);
+         Credentials.Load_Identity_Public (Id, Ada.Command_Line.Argument (1), P_OK);
+         if not (S_OK and P_OK) then
+            Put_Line ("Failed to set up the external signer");
+            return;
+         end if;
+         Put_Line ("External signer: enabled (" & Id.Sign_Algo'Image
+                   & ", TLS side holds no private key)");
+      end;
    end if;
 
    --  Optional --staple <ocsp.der>: RFC 6066 stapled OCSP response, sent

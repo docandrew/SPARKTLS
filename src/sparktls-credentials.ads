@@ -24,6 +24,14 @@ is
    procedure Load_Identity_PEM
      (Id : out Identity; Cert_PEM : String; Key_PEM : String; OK : out Boolean);
 
+   --  Public-only identity: the certificate chain, no private key. Every
+   --  handshake signature then comes from Config.Sign;
+   --  the TLS process never holds the key.
+   procedure Load_Identity_Public
+     (Id : out Identity; Cert_Path : String; OK : out Boolean);
+   procedure Load_Identity_Public_PEM
+     (Id : out Identity; Cert_PEM : String; OK : out Boolean);
+
    --  Load trust store from a PEM file containing one or more
    --  CA certificates (for server-side client cert validation,
    --  or client-side server cert validation).

@@ -1450,6 +1450,79 @@ fi
 # --- Summary ---
 cleanup
 echo ""
+# ===================================================================
+# External signer: the server holds a public-only
+# identity and every handshake signature comes from the Software_Signer
+# callback, standing in for a YubiKey, TPM, HSM or signing process. The
+# handshake must look exactly like the local-key one to OpenSSL, in both
+# TLS 1.3 (CertificateVerify) and TLS 1.2 (ServerKeyExchange), for every
+# key type; and the server must report that it holds no private key.
+# ===================================================================
+echo "--- External signer: public-only identity + Sign callback ---"
+for cred in p256 p384 rsa ed25519; do
+    [ -f "$CERT_DIR/${cred}.crt" ] || continue
+    cleanup
+    "$SERVER" "$CERT_DIR/${cred}.crt" "$CERT_DIR/${cred}.key" --external-sign > /tmp/extsign_${cred}.log 2>&1 &
+    wait_for_port
+    if grep -q "External signer: enabled" /tmp/extsign_${cred}.log; then
+        pass "external signer ($cred): server holds no private key"
+    else
+        fail "external signer ($cred): server did not enable the callback"
+    fi
+    for ver in tls1_3 tls1_2; do
+        if [ "$cred" = "ed25519" ] && [ "$ver" = "tls1_2" ]; then
+            continue   # no Ed25519 ServerKeyExchange suites offered by s_client here
+        fi
+        output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -$ver -quiet 2>&1 || true)
+        if echo "$output" | grep -qi "hello\|verify return"; then
+            pass "external signer ($cred, $ver): handshake completes"
+        else
+            fail "external signer ($cred, $ver): handshake failed: $(echo "$output" | head -2 | tr '\n' ' ')"
+        fi
+    done
+    cleanup
+done
+
+# ===================================================================
+# Hardware-gated: YubiKey PIV as the server identity (the external-signing design notes,
+# sparkpiv). Runs only when the example is built and a YubiKey with a
+# user-writable device node is present (and pcscd is not holding it);
+# otherwise it is skipped and counts for nothing. Uses slot 9e, which
+# signs without a PIN, so no secret is needed; the slot must hold a P-256
+# or P-384 key with a certificate (yubico-piv-tool -a generate -s 9e ...).
+# ===================================================================
+YK_SERVER="$REPO_ROOT/bin/examples/tls_yubikey_server"
+YK_NODE=""
+for d in /sys/bus/usb/devices/*; do
+    if [ -f "$d/idVendor" ] && [ "$(cat "$d/idVendor" 2>/dev/null)" = "1050" ]; then
+        b=$(cat "$d/busnum"); n=$(cat "$d/devnum")
+        YK_NODE=$(printf "/dev/bus/usb/%03d/%03d" "$b" "$n")
+        break
+    fi
+done
+if [ -x "$YK_SERVER" ] && [ -n "$YK_NODE" ] && [ -w "$YK_NODE" ] && ! pgrep -x pcscd >/dev/null; then
+    echo "--- YubiKey PIV identity: token signs the handshake (slot 9e, no PIN) ---"
+    cleanup
+    "$YK_SERVER" 9e "$PORT" > /tmp/yubikey_server.log 2>&1 &
+    wait_for_port
+    if grep -q "public only; the key stays in the YubiKey" /tmp/yubikey_server.log; then
+        pass "yubikey: identity loaded from the token, no private key in the process"
+    else
+        fail "yubikey: token setup failed: $(tail -2 /tmp/yubikey_server.log | tr '\n' ' ')"
+    fi
+    for ver in tls1_3 tls1_2; do
+        output=$(echo "hello" | timeout 20 openssl s_client -connect 127.0.0.1:$PORT -$ver -quiet 2>&1 || true)
+        if echo "$output" | grep -qi "hello\|verify return"; then
+            pass "yubikey: $ver handshake signed by the token"
+        else
+            fail "yubikey: $ver handshake failed: $(echo "$output" | head -2 | tr '\n' ' ')"
+        fi
+    done
+    cleanup
+else
+    echo "--- YubiKey PIV identity: skipped (needs bin/examples/tls_yubikey_server, a writable YubiKey device node, no pcscd) ---"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo "=== Integration: $PASS/$TOTAL passed, $FAIL failed ==="
 [ $FAIL -eq 0 ] && exit 0 || exit 1

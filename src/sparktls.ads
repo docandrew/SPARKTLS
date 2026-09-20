@@ -1039,6 +1039,45 @@ is
    type Get_Time_Fn is access function return X509.Date_Time;
 
    ----------------------------------------------------------------------------
+   --  External signing callback (HSM, TPM, smart card, signing process).
+   --
+   --  When Config.Sign is set the library never reads private key material:
+   --  at each point where a handshake signature is needed it calls Sign with
+   --  the negotiated scheme and the to-be-signed input and uses the
+   --  signature returned. The identity is then loaded with
+   --  Cert_Verify.Set_Identity_Public (certificate and public key only).
+   --
+   --  Message is the exact to-be-signed input: the RFC 8446 4.4.3 content
+   --  for TLS 1.3 CertificateVerify, client_random || server_random ||
+   --  ServerECDHParams for TLS 1.2 ServerKeyExchange. Digest is
+   --  Hash (Message) under the scheme's hash, for signers that take a
+   --  digest (PKCS#11 CKM_ECDSA and CKM_RSA_PKCS_PSS, TPM2_Sign, secure
+   --  elements); it is empty for Ed25519, which signs the message. For
+   --  TLS 1.2 client CertificateVerify the message is the whole transcript,
+   --  so only Digest is supplied and Message is empty.
+   --
+   --  Sig is returned exactly as TLS carries it: RSA as a big-endian
+   --  integer of modulus length with PKCS#1 v1.5 or PSS already applied,
+   --  ECDSA as DER SEQUENCE { r, s } (External_Signing.ECDSA_Raw_To_DER
+   --  converts the r || s that hardware returns), Ed25519 as 64 bytes. The
+   --  library verifies every returned signature against the identity's
+   --  public key before it can reach the wire; a signer that fails or
+   --  returns a wrong signature ends the handshake with internal_error.
+   --
+   --  Pending is reserved for a future asynchronous mode and is treated
+   --  as Failed.
+   ----------------------------------------------------------------------------
+   type Sign_Status is (Signed, Failed, Pending);
+
+   type Sign_Fn is access procedure
+     (Scheme  : in     Maybe_Sig_Scheme;
+      Message : in     Byte_Seq;
+      Digest  : in     Byte_Seq;
+      Sig     :    out Byte_Seq;
+      Sig_Len :    out N32;
+      Status  :    out Sign_Status);
+
+   ----------------------------------------------------------------------------
    --  Certificate pool types
    --
    --  Used by Trust_Store, Identity, and Validate_Chain.
@@ -1149,6 +1188,10 @@ is
 
       --  Signing key (algorithm inferred from cert's PK_Algorithm)
       Sign_Algo      : Signing_Algorithm := Sign_None;
+      --  False after Set_Identity_Public: certificate and public key only.
+      --  A signing site that finds this False and no Config.Sign fails
+      --  closed rather than sign with the all-zero key fields below.
+      Has_Private_Key : Boolean := False;
       Ed25519_Key    : Bytes_64 := (others => 0);
       ECDSA_P256_Key : Bytes_32 := (others => 0);
       ECDSA_P384_Key : Bytes_48 := (others => 0);
@@ -1852,6 +1895,12 @@ is
       --  the local identity.
       Sign_Sig_Algos      : Sig_Algo_List := (others => Scheme_None);
       Sign_Sig_Algo_Count : Sig_Algo_Count := 0;
+
+      --  External signer. null: sign locally from the
+      --  identity's private key. Non-null: the identity carries no private
+      --  material (Set_Identity_Public) and every handshake signature goes
+      --  through this callback.
+      Sign : Sign_Fn := null;
 
       --  Server: request a client certificate (mTLS). When True the
       --  server sends a CertificateRequest in the handshake.

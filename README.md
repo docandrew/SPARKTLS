@@ -139,6 +139,19 @@ the socket. The only callbacks are the hooks the application installs in
 client-identity selector, the OCSP-staple policy hooks and the ticket-key
 ring accessors.
 
+## External signing (HSM, TPM, smart card, signing process)
+
+Set `Config.Sign` to a `SPARKTLS.Sign_Fn` and load the identity with
+`Credentials.Load_Identity_Public` (certificate only). SPARKTLS then never
+holds the private key: at each handshake signature it calls your callback
+with the negotiated scheme, the to-be-signed message and its digest, and
+verifies the signature you return against the certificate before sending
+it. `SPARKTLS.External_Signing.ECDSA_Raw_To_DER` converts the `r || s`
+that PKCS#11, TPM2 and secure elements return. `examples/software_signer.adb`
+is a complete callback over a software key; `tls_blocking_server
+--external-sign` runs the server through it, and `tls_yubikey_server` does
+the same with a YubiKey PIV slot via the sparkpiv crate.
+
 ## Session Ticket Policy
 
 Tickets on both versions are sealed under the server's ticket-encryption

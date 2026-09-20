@@ -36,8 +36,15 @@ is
    --  Load identity from PEM strings (no file I/O).
    --  Cert_PEM: leaf cert + optional intermediate chain.
    --  Key_PEM: PKCS#8 private key.
+   --  Public_Only: ignore Key_PEM (may be empty) and load the certificate
+   --  chain alone through Cert_Verify.Set_Identity_Public, for an identity
+   --  whose signatures come from Config.Sign.
    procedure Load_Identity_PEM
-     (Id : out Identity; Cert_PEM : String; Key_PEM : String; OK : out Boolean)
+     (Id          : out Identity;
+      Cert_PEM    : String;
+      Key_PEM     : String;
+      OK          : out Boolean;
+      Public_Only : Boolean := False)
    with Pre => Cert_PEM'Last <= PEM.Max_PEM_Input and Key_PEM'Last <= PEM.Max_PEM_Input;
 
 end SPARKTLS.Credentials.Parsing;

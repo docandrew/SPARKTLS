@@ -30,6 +30,7 @@ project Unit_Tests is
                  "test_rsa_pkcs1_kat.adb",
                  "test_rsa_pss_sign_kat.adb",
                  "test_rsa_crt.adb",
+                 "test_external_sign.adb",
                  "test_aes_gcm_inplace.adb",
                  "test_aes_gcm_seq.adb",
                  "test_psk_resume.adb",

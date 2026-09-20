@@ -53,6 +53,7 @@ is
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
       Random          : in Random_Bytes_Fn;
+      Sign            : in Sign_Fn;
       Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
       Len             : out N32)

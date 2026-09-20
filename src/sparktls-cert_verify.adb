@@ -1123,6 +1123,7 @@ is
       Id.Sign_Prefs := (others => Scheme_None);
       Id.Sign_Pref_Count := 0;
       Id.Has_Identity := False;
+      Id.Has_Private_Key := False;
 
       if Cert_DER'Length = 0 then
          return;
@@ -1307,8 +1308,114 @@ is
 
       Id.Cert_Valid := True;
       Id.Has_Identity := True;
+      Id.Has_Private_Key := True;
       OK := True;
    end Set_Identity;
+
+   procedure Set_Identity_Public
+     (Id : out Identity; Cert_DER : X509.Byte_Seq; OK : out Boolean)
+   is
+      C    : X509.Certificate;
+      P_OK : Boolean;
+   begin
+      OK := False;
+      --  Same explicit initialisation as Set_Identity: every field set on
+      --  every return path. All private key fields stay zero for good.
+      Id.Int_Count := 0;
+      Id.Ints := (others => <>);
+      Id.Cert_DER := (others => 0);
+      Id.Cert_DER_Len := 0;
+      Id.Cert := C;
+      Id.Cert_Valid := False;
+      Id.NaCl_Cert_DER := (others => 0);
+      Id.NaCl_Cert_Len := 0;
+      Id.Sign_Algo := Sign_None;
+      Id.Ed25519_Key := (others => 0);
+      Id.ECDSA_P256_Key := (others => 0);
+      Id.ECDSA_P384_Key := (others => 0);
+      Id.RSA_Modulus := (others => 0);
+      Id.RSA_Mod_Len := 0;
+      Id.RSA_Priv_Exp := (others => 0);
+      Id.RSA_Pub_Exp := 0;
+      Id.RSA_CRT := SPARKTLSCrypto.RSA.No_CRT;
+      Id.OCSP_Staple := (others => 0);
+      Id.OCSP_Staple_Len := 0;
+      Id.Must_Match_Issuer := False;
+      Id.Sign_Prefs := (others => Scheme_None);
+      Id.Sign_Pref_Count := 0;
+      Id.Has_Identity := False;
+      Id.Has_Private_Key := False;
+
+      if Cert_DER'Length = 0 then
+         return;
+      end if;
+      X509.Parse (Cert_DER, C, P_OK);
+      if not P_OK or else not X509.Is_Valid (C) then
+         return;
+      end if;
+
+      --  The key kind comes from the certificate's SubjectPublicKeyInfo,
+      --  where Set_Identity derives it from the private key. For RSA the
+      --  modulus and exponent are kept: the signing sites size their
+      --  buffers by RSA_Mod_Len and the returned signature is verified
+      --  against them.
+      case X509.PK_Algorithm (C) is
+         when X509.Algo_EC_Ed25519 | X509.Algo_Ed25519 =>
+            if X509.PK_Length (C) /= 32 then
+               return;
+            end if;
+            Id.Sign_Algo := Sign_Ed25519;
+         when X509.Algo_EC_P256 =>
+            if X509.PK_Length (C) /= 65 then
+               return;
+            end if;
+            Id.Sign_Algo := Sign_ECDSA_P256;
+         when X509.Algo_EC_P384 =>
+            if X509.PK_Length (C) /= 97 then
+               return;
+            end if;
+            Id.Sign_Algo := Sign_ECDSA_P384;
+         when X509.Algo_RSA =>
+            declare
+               N_Len : constant X509.N32 := X509.PK_Length (C);
+            begin
+               if N_Len not in 64 .. X509.N32 (Max_RSA_Key_Bytes)
+                 or else N_Len > X509.Max_PK_Bytes
+               then
+                  return;
+               end if;
+               declare
+                  PK : constant X509.Byte_Seq := X509.PK_Data (C);
+               begin
+                  if PK'Length /= N_Len then
+                     return;
+                  end if;
+                  for I in X509.N32 range 0 .. N_Len - 1 loop
+                     pragma Loop_Invariant (I in 0 .. N_Len - 1);
+                     Id.RSA_Modulus (N32 (I)) := Byte (PK (PK'First + I));
+                  end loop;
+               end;
+               Id.RSA_Mod_Len := N32 (N_Len);
+               Id.RSA_Pub_Exp := X509.RSA_Exponent (C);
+               Id.Sign_Algo := Sign_RSA_PSS;
+            end;
+         when others =>
+            return;
+      end case;
+
+      Id.Cert := C;
+      Id.Cert_DER (0 .. X509.N32 (Cert_DER'Length) - 1) := Cert_DER;
+      Id.Cert_DER_Len := X509.N32 (Cert_DER'Length);
+      if Cert_DER'Length <= N32'Last then
+         Id.NaCl_Cert_Len := N32 (Cert_DER'Length);
+         for I in X509.N32 range 0 .. X509.N32 (Cert_DER'Length) - 1 loop
+            Id.NaCl_Cert_DER (N32 (I)) := Byte (Cert_DER (I));
+         end loop;
+      end if;
+      Id.Cert_Valid := True;
+      Id.Has_Identity := True;
+      OK := True;
+   end Set_Identity_Public;
 
    procedure Add_Intermediate (Id : in out Identity; DER : X509.Byte_Seq; OK : out Boolean) is
    begin

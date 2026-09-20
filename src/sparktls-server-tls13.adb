@@ -1424,6 +1424,7 @@ is
          Sig_Algo_Wire   => S.HC.Negotiated_Sig_Algo,
          Role            => Role_Server,
          Random          => Cfg.Random,
+         Sign            => Cfg.Sign,
          Arena_Storage   => D.Arena_Storage,
          Result          => CV_Buf,
          Len             => CV_Len);

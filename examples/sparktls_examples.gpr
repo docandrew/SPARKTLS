@@ -1,12 +1,13 @@
 with "../sparktls.gpr";
 with "../../sparkentropy/sparkentropy.gpr";
+with "../../sparkpiv/sparkpiv_linux.gpr";
 
 project SPARKTLS_Examples is
 
    for Source_Dirs use (".");
    for Object_Dir use "../bin/examples";
    for Create_Missing_Dirs use "True";
-   for Main use ("tls_fetch.adb", "tls_web_epoll.adb",
+   for Main use ("tls_fetch.adb", "tls_yubikey_server.adb", "tls_web_epoll.adb",
                   "tls_revocation_check.adb",
                   "tls_test_client.adb", "tls_test_server.adb",
                   "tls_blocking_server.adb",
