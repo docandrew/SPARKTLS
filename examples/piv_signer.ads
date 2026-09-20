@@ -20,7 +20,8 @@ package PIV_Signer is
       Why      : out PIV.Status);
 
    procedure Sign
-     (Scheme  : in     Maybe_Sig_Scheme;
+     (Id      : in     Identity;
+      Scheme  : in     Maybe_Sig_Scheme;
       Message : in     Byte_Seq;
       Digest  : in     Byte_Seq;
       Sig     :    out Byte_Seq;

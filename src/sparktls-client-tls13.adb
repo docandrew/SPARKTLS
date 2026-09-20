@@ -1761,9 +1761,10 @@ is
                --  CertificateVerify would be a protocol violation the server
                --  rejects with its own alert; fail locally instead.
                if CV_Len = 0 then
-                  S.Last_Error := Internal_Error;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
+                  --  Signature failed closed: tell the server with an alert
+                  --  under the handshake keys (application keys are not
+                  --  derived yet) instead of going silent.
+                  Send_HS_Encrypted_Alert (S, D, Internal_Error, Result);
                   return;
                end if;
                SPARKTLS_Transcript.Append (S.HC.TS, CV_Buf (0 .. CV_Len - 1));

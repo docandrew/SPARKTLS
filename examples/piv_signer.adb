@@ -1,5 +1,6 @@
 with Interfaces;
 with PIV.Linux_USB;
+with SPARKTLS.External_Signing;
 
 package body PIV_Signer is
    use type PIV.Index;
@@ -29,6 +30,10 @@ package body PIV_Signer is
       Cert := (others => 0);
       Cert_Len := 0;
       OK := False;
+      Why := PIV.Card_Error;
+      if PIN'Length > 8 or else (S /= PIV.Slot_9E_Card_Authentication and then PIN'Length < 6) then
+         return;   --  PIV PINs are 6 to 8 characters (9E takes none)
+      end if;
       The_Slot := S;
       PIN_Len := PIV.Index (PIN'Length);
       for I in PIN'Range loop
@@ -63,13 +68,15 @@ package body PIV_Signer is
    end Init;
 
    procedure Sign
-     (Scheme  : in     Maybe_Sig_Scheme;
+     (Id      : in     Identity;
+      Scheme  : in     Maybe_Sig_Scheme;
       Message : in     Byte_Seq;
       Digest  : in     Byte_Seq;
       Sig     :    out Byte_Seq;
       Sig_Len :    out N32;
       Status  :    out Sign_Status)
    is
+      pragma Unreferenced (Id);   --  one slot per process here
       use type PIV.Status;
       use type PIV.Slot;
       Alg     : PIV.Algorithm;
@@ -115,6 +122,28 @@ package body PIV_Signer is
         or else (Use_Msg and then Out_L /= 64)
       then
          return;
+      end if;
+      --  A YubiKey returns ECDSA already DER-encoded (30 ..). Some cards
+      --  return raw r || s; convert that so TLS gets the wire form.
+      if not Use_Msg and then Out_L in 64 | 96 and then Out_S (0) /= 16#30# then
+         declare
+            Raw   : Byte_Seq (0 .. N32 (Out_L) - 1);
+            DER   : Byte_Seq (0 .. External_Signing.Max_ECDSA_DER_Len - 1);
+            D_Len : N32;
+            D_OK  : Boolean;
+         begin
+            for I in Raw'Range loop
+               Raw (I) := Byte (Out_S (PIV.Index (I)));
+            end loop;
+            External_Signing.ECDSA_Raw_To_DER (Raw, N32 (Out_L) / 2, DER, D_Len, D_OK);
+            if not D_OK or else D_Len > Sig'Length then
+               return;
+            end if;
+            Sig (Sig'First .. Sig'First + D_Len - 1) := DER (0 .. D_Len - 1);
+            Sig_Len := D_Len;
+            Status := Signed;
+            return;
+         end;
       end if;
       for I in 0 .. Out_L - 1 loop
          Sig (Sig'First + N32 (I)) := Byte (Out_S (I));

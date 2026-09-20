@@ -2,7 +2,7 @@
 --  plus a Sign_Fn callback, checked at the TLS 1.3 CertificateVerify
 --  builder with a P-256 key (the YubiKey case).
 --
---  Usage: test_external_sign <p256.crt> <p256.key>
+--  Usage: test_external_sign <p256.crt> <p256.key> [<rsa.crt> <rsa.key>]
 with Ada.Command_Line;
 with Ada.Text_IO;   use Ada.Text_IO;
 with Interfaces;    use Interfaces;
@@ -12,8 +12,10 @@ with SPARKTLS.Credentials;
 with SPARKTLS.Cert_Verify;
 with SPARKTLS.External_Signing;
 with SPARKTLS.Handshake.TLS13;
+with SPARKTLS.Handshake.TLS12;
 with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.RFC6979;
+with SPARKTLSCrypto.RSA;
 
 procedure Test_External_Sign is
    Total, Pass, Fail : Natural := 0;
@@ -37,17 +39,18 @@ procedure Test_External_Sign is
       Output := (others => 16#5A#);
    end Fixed_Random;
 
-   Mode : Natural := 0;   --  0 sign correctly, 1 corrupt, 2 refuse
+   Mode : Natural := 0;   --  0 sign correctly, 1 corrupt, 2 refuse, 3 report Pending
 
    procedure P256_Sign
-     (Scheme  : in     Maybe_Sig_Scheme;
+     (Id      : in     Identity;
+      Scheme  : in     Maybe_Sig_Scheme;
       Message : in     Byte_Seq;
       Digest  : in     Byte_Seq;
       Sig     :    out Byte_Seq;
       Sig_Len :    out N32;
       Status  :    out Sign_Status)
    is
-      pragma Unreferenced (Message);
+      pragma Unreferenced (Id, Message);
       H, K  : Bytes_32;
       Blind : constant Byte_Seq (0 .. 39) := (others => 16#5A#);
       R, S  : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
@@ -73,18 +76,70 @@ procedure Test_External_Sign is
       if not D_OK then return; end if;
       Sig (Sig'First .. Sig'First + D_Len - 1) := DER (0 .. D_Len - 1);
       if Mode = 1 then
-         Sig (Sig'First + 4) := Sig (Sig'First + 4) xor 16#80#;   --  inside r
+         --  Flip the LAST byte (low bit of s): still valid DER, so the
+         --  rejection can only come from verification, not from parsing.
+         Sig (Sig'First + D_Len - 1) := Sig (Sig'First + D_Len - 1) xor 16#01#;
       end if;
       Sig_Len := D_Len;
-      Status := Signed;
+      Status := (if Mode = 3 then Pending else Signed);
    end P256_Sign;
+
+   --  An RSA signer over a second identity (PSS for 1.3, PKCS#1 v1.5 for 1.2).
+   RSA_Id : aliased Identity;
+   RSA_OK : Boolean := False;
+   procedure RSA_Sign
+     (Id      : in     Identity;
+      Scheme  : in     Maybe_Sig_Scheme;
+      Message : in     Byte_Seq;
+      Digest  : in     Byte_Seq;
+      Sig     :    out Byte_Seq;
+      Sig_Len :    out N32;
+      Status  :    out Sign_Status)
+   is
+      pragma Unreferenced (Id, Message);
+      H_Len : constant N32 := Digest'Length;
+      M_Hash : Byte_Seq (0 .. 63) := (others => 0);
+      Salt   : constant Byte_Seq (0 .. 63) := (others => 16#33#);
+      Blind  : constant Bytes_16 := (others => 16#5A#);
+      Out_S  : Byte_Seq (0 .. 1023) := (others => 0);
+      O_Len  : N32;
+      OK     : Boolean := False;
+   begin
+      Sig := (others => 0); Sig_Len := 0; Status := Failed;
+      if Mode = 2 or else not RSA_OK or else H_Len not in 32 | 48 | 64 or else Sig'Length < RSA_Id.RSA_Mod_Len then
+         return;
+      end if;
+      M_Hash (0 .. H_Len - 1) := Digest;
+      case Scheme is
+         when Sig_RSA_PSS_SHA256 =>
+            SPARKTLSCrypto.RSA.Sign_PSS
+              (M_Hash => M_Hash (0 .. 31), Hash_Len => 32, Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
+               Modulus => RSA_Id.RSA_Modulus, Mod_Len => RSA_Id.RSA_Mod_Len, Priv_Exp => RSA_Id.RSA_Priv_Exp,
+               Salt => Salt (0 .. 31), Signature => Out_S, Sig_Len => O_Len, OK => OK,
+               Blind => Blind, Pub_Exp => RSA_Id.RSA_Pub_Exp, CRT => RSA_Id.RSA_CRT);
+         when Sig_RSA_PKCS1_SHA256 =>
+            SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
+              (M_Hash => M_Hash (0 .. 31), Hash_Len => 32,
+               Modulus => RSA_Id.RSA_Modulus, Mod_Len => RSA_Id.RSA_Mod_Len, Priv_Exp => RSA_Id.RSA_Priv_Exp,
+               Signature => Out_S, Sig_Len => O_Len, OK => OK,
+               Blind => Blind, Pub_Exp => RSA_Id.RSA_Pub_Exp, CRT => RSA_Id.RSA_CRT);
+         when others => return;
+      end case;
+      if not OK then return; end if;
+      Sig (Sig'First .. Sig'First + O_Len - 1) := Out_S (0 .. O_Len - 1);
+      if Mode = 1 then
+         Sig (Sig'First + O_Len - 1) := Sig (Sig'First + O_Len - 1) xor 16#01#;
+      end if;
+      Sig_Len := O_Len;
+      Status := Signed;
+   end RSA_Sign;
 
    TH    : constant Byte_Seq (0 .. 31) := (others => 16#42#);   --  a transcript hash
    Arena : aliased Arena_Bytes := (others => 0);
    CV    : Byte_Seq (0 .. 523);
    CV_Len : N32;
 begin
-   if Ada.Command_Line.Argument_Count /= 2 then
+   if Ada.Command_Line.Argument_Count not in 2 | 4 then
       Put_Line ("usage: test_external_sign <p256.crt> <p256.key>");
       Ada.Command_Line.Set_Exit_Status (1);
       return;
@@ -176,6 +231,97 @@ begin
       Sign => P256_Sign'Unrestricted_Access,
       Arena_Storage => Arena, Result => CV, Len => CV_Len);
    Check ("signer failure: CertificateVerify refused", CV_Len = 0);
+
+   --  5b. A signer that reports Pending (reserved): treated as failure.
+   Mode := 3;
+   Handshake.TLS13.Build_Certificate_Verify
+     (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
+      Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
+      Sign => P256_Sign'Unrestricted_Access,
+      Arena_Storage => Arena, Result => CV, Len => CV_Len);
+   Check ("signer status Pending: CertificateVerify refused", CV_Len = 0);
+
+   --  5c. TLS 1.2 client CertificateVerify through the callback (pre-hashed
+   --  path: the signer gets the digest only). Correct, then corrupt, then
+   --  refused; and Ed25519 refused before the signer is ever called.
+   declare
+      CV12  : Byte_Seq (0 .. 1023);
+      L12   : N32;
+      L12b  : N32;
+      CV12b : Byte_Seq (0 .. 1023);
+   begin
+      Mode := 0;
+      Handshake.TLS12.Build_Certificate_Verify_12
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
+         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+         Result => CV12, Len => L12);
+      Check ("1.2 CV external (digest only): built", L12 > 8);
+      Handshake.TLS12.Build_Certificate_Verify_12
+        (Transcript_Hash => TH, Id => Key_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
+         Random => Fixed_Random'Unrestricted_Access, Sign => null,
+         Result => CV12b, Len => L12b);
+      Check ("1.2 CV local and external byte-identical",
+             L12 = L12b and then L12 > 0 and then CV12 (0 .. L12 - 1) = CV12b (0 .. L12b - 1));
+      Mode := 1;
+      Handshake.TLS12.Build_Certificate_Verify_12
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
+         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+         Result => CV12, Len => L12);
+      Check ("1.2 CV external: corrupt signature rejected before the wire", L12 = 0);
+      Mode := 2;
+      Handshake.TLS12.Build_Certificate_Verify_12
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
+         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+         Result => CV12, Len => L12);
+      Check ("1.2 CV external: signer failure refused", L12 = 0);
+      Mode := 0;
+      Handshake.TLS12.Build_Certificate_Verify_12
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_Ed25519,
+         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+         Result => CV12, Len => L12);
+      Check ("1.2 CV external: Ed25519 refused (no message available)", L12 = 0);
+   end;
+
+   --  5d. RSA through the callback, if an RSA identity was given: PSS on 1.3
+   --  and PKCS#1 v1.5 on 1.2, each verified under the certificate; corrupt
+   --  rejected.
+   if Ada.Command_Line.Argument_Count >= 4 then
+      declare
+         RSA_Pub : aliased Identity;
+         P_OK    : Boolean;
+         CVr     : Byte_Seq (0 .. 1023);
+         Lr      : N32;
+      begin
+         Credentials.Load_Identity (RSA_Id, Ada.Command_Line.Argument (3), Ada.Command_Line.Argument (4), RSA_OK);
+         Credentials.Load_Identity_Public (RSA_Pub, Ada.Command_Line.Argument (3), P_OK);
+         Check ("RSA identities load (private + public-only)", RSA_OK and P_OK and RSA_Pub.Sign_Algo = Sign_RSA_PSS);
+         Mode := 0;
+         Handshake.TLS13.Build_Certificate_Verify
+           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PSS_SHA256,
+            Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
+            Sign => RSA_Sign'Unrestricted_Access, Arena_Storage => Arena, Result => CVr, Len => Lr);
+         Check ("1.3 CV external RSA-PSS: built and verified", Lr = 8 + RSA_Pub.RSA_Mod_Len);
+         Mode := 1;
+         Handshake.TLS13.Build_Certificate_Verify
+           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PSS_SHA256,
+            Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
+            Sign => RSA_Sign'Unrestricted_Access, Arena_Storage => Arena, Result => CVr, Len => Lr);
+         Check ("1.3 CV external RSA-PSS: corrupt rejected", Lr = 0);
+         Mode := 0;
+         Handshake.TLS12.Build_Certificate_Verify_12
+           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PKCS1_SHA256,
+            Random => Fixed_Random'Unrestricted_Access, Sign => RSA_Sign'Unrestricted_Access,
+            Result => CVr, Len => Lr);
+         Check ("1.2 CV external RSA PKCS#1: built and verified", Lr > 8);
+         Mode := 1;
+         Handshake.TLS12.Build_Certificate_Verify_12
+           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PKCS1_SHA256,
+            Random => Fixed_Random'Unrestricted_Access, Sign => RSA_Sign'Unrestricted_Access,
+            Result => CVr, Len => Lr);
+         Check ("1.2 CV external RSA PKCS#1: corrupt rejected", Lr = 0);
+         Mode := 0;
+      end;
+   end if;
 
    --  6. ECDSA_Raw_To_DER rejects a wrong length.
    declare

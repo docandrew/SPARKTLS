@@ -114,11 +114,9 @@ begin
    --  Token: connect, select PIV, verify PIN, read the slot certificate.
    declare
       Slot_Arg : constant String := Ada.Command_Line.Argument (1);
-      Slot     : constant PIV.Slot :=
-        (if Slot_Arg = "9a" or Slot_Arg = "9A" then PIV.Slot_9A_Authentication
-         elsif Slot_Arg = "9e" or Slot_Arg = "9E" then PIV.Slot_9E_Card_Authentication
-         else PIV.Slot_9C_Signature);
+      Slot     : PIV.Slot := PIV.Slot_9C_Signature;
       Reader   : String (1 .. 128);
+      Slot_OK  : Boolean := True;
       R_Len    : Natural;
       R_OK     : Boolean;
       Cert     : Byte_Seq (0 .. 4095);
@@ -126,6 +124,19 @@ begin
       T_OK     : Boolean;
       Why      : PIV.Status;
    begin
+      if Slot_Arg = "9a" or Slot_Arg = "9A" then
+         Slot := PIV.Slot_9A_Authentication;
+      elsif Slot_Arg = "9c" or Slot_Arg = "9C" then
+         Slot := PIV.Slot_9C_Signature;
+      elsif Slot_Arg = "9e" or Slot_Arg = "9E" then
+         Slot := PIV.Slot_9E_Card_Authentication;
+      else
+         Slot_OK := False;
+      end if;
+      if not Slot_OK then
+         Put_Line ("Unknown slot '" & Slot_Arg & "': use 9a, 9c or 9e");
+         return;
+      end if;
       PIV.Linux_USB.Connect (Reader, R_Len, R_OK);
       if not R_OK then
          Put_Line ("No YubiKey CCID interface reachable: inserted? udev rule? pcscd not running?");
@@ -134,6 +145,7 @@ begin
       Put_Line ("Token: " & Reader (1 .. R_Len));
       PIV_Signer.Init (Slot, PIN_Buf (1 .. PIN_Len), Cert, Cert_Len, T_OK, Why);
       PIN_Buf := (others => '0');   --  the signer keeps its own copy
+      pragma Inspection_Point (PIN_Buf);
       if not T_OK then
          Put_Line ("PIV setup failed: " & Why'Image);
          return;
@@ -165,6 +177,9 @@ begin
 
    loop
       Accept_Socket (Server_Sock, Client_Sock, Client_Addr);
+      --  One misbehaving client (reset mid-flight, send timeout) must not
+      --  take the server down: everything per connection is handled here.
+      begin
       Set_Socket_Option (Client_Sock, Socket_Level, (Receive_Timeout, 30.0));
       Set_Socket_Option (Client_Sock, Socket_Level, (Send_Timeout, 10.0));
       Channel := Stream (Client_Sock);
@@ -219,6 +234,15 @@ begin
       end if;
       Close_Socket (Client_Sock);
       Put_Line ("  closed");
+      exception
+         when E : others =>
+            Put_Line ("  connection error: " & Ada.Exceptions.Exception_Message (E));
+            begin
+               Close_Socket (Client_Sock);
+            exception
+               when others => null;
+            end;
+      end;
    end loop;
 exception
    when E : others =>

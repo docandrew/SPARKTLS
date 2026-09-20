@@ -13,7 +13,7 @@
 --
 --  Usage:
 --    mtls_test_client --port 18443 [--host HOSTNAME]
---                     [--cert-file FILE --key-file FILE]
+--                     [--cert-file FILE --key-file FILE [--external-sign]]
 --                     [--trust-cert FILE]
 --                     [--message STR]
 --                     [--expect-echo]
@@ -36,6 +36,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with Software_Signer;
 with Entropy_Random;
 with X509;
 
@@ -64,6 +65,7 @@ procedure MTLS_Test_Client is
    Cfg_Expect_ALPN : String (1 .. 255) := (others => Character'Val (0));
    Cfg_Expect_ALPN_Len : Natural := 0;
    Cfg_Skip_Verify          : Boolean := False;
+   Cfg_External : Boolean := False;   --  --external-sign
    Cfg_Skip_Hostname_Verify : Boolean := False;
 
    procedure Err (M : String) is
@@ -129,6 +131,8 @@ procedure MTLS_Test_Client is
                Set_Path (Cfg_Key, Next_Arg);
             elsif A = "--trust-cert" then
                Set_Path (Cfg_Trust, Next_Arg);
+            elsif A = "--external-sign" then
+               Cfg_External := True;   --  key held by Software_Signer, identity public-only
             elsif A = "--message" then
                declare
                   V : constant String := Next_Arg;
@@ -311,7 +315,19 @@ begin
          Have_Trust := True;
       end if;
       if Cert /= "" and Key /= "" then
-         SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+         if Cfg_External then
+            --  Client-side external signing: the TLS side gets the
+            --  certificate only; CertificateVerify is signed by the callback.
+            declare
+               S_OK : Boolean;
+            begin
+               Software_Signer.Init (Cert, Key, S_OK);
+               SPARKTLS.Credentials.Load_Identity_Public (Id, Cert, Id_OK);
+               Id_OK := Id_OK and S_OK;
+            end;
+         else
+            SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+         end if;
          if not Id_OK then
             Err ("load identity failed: " & Cert);
             Ada.Command_Line.Set_Exit_Status
@@ -334,6 +350,8 @@ begin
        Local                =>
           (if Have_Local then Id'Unchecked_Access
            else SPARKTLS.No_Identity'Access),
+       Sign                 =>
+          (if Cfg_External then Software_Signer.Sign'Access else null),
        Verify_Mode          => SPARKTLS.Mode_RFC5280,
        ALPN                 => SPARKTLS.To_Name (Cfg_ALPN (1 .. Cfg_ALPN_Len)),
        Skip_Verify          => Cfg_Skip_Verify,

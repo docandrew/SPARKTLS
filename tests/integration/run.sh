@@ -637,6 +637,39 @@ else
         done
     done
 
+    # Client-side external signing: the client's CertificateVerify is
+    # produced by the Sign callback with a public-only identity, on TLS 1.3
+    # and TLS 1.2 (the 1.2 path is the pre-hashed, message-less one).
+    for cred in "p256" "rsa" "ed25519"; do
+        for ver in tls1_3 tls1_2; do
+            #  Ed25519 client auth on TLS 1.2 is declined by design (PureEdDSA
+            #  needs the whole transcript, which the streamed transcript cannot
+            #  replay), with a local key as much as with a callback.
+            if [ "$cred" = "ed25519" ] && [ "$ver" = "tls1_2" ]; then continue; fi
+            cleanup
+            openssl s_server -accept 0:$PORT \
+                -cert "$CERT_DIR/${cred}.crt" -key "$CERT_DIR/${cred}.key" \
+                -CAfile "$CERT_DIR/${cred}.crt" -Verify 1 -$ver -no_ticket -quiet \
+                > /tmp/mtls_srv.log 2>&1 &
+            sleep 0.5
+            output=$(timeout 5 "$CLIENT" \
+                --port $PORT --host localhost \
+                --cert-file "$CERT_DIR/${cred}.crt" \
+                --key-file "$CERT_DIR/${cred}.key" \
+                --external-sign \
+                --trust-cert "$CERT_DIR/${cred}.crt" \
+                --message "hello-from-sparktls" 2>&1)
+            rc=$?
+            cleanup
+            if [ $rc -eq 0 ]; then
+                pass "client mTLS external signer $cred $ver"
+            else
+                fail "client mTLS external signer $cred $ver"
+                echo "    $(echo "$output" | head -2)"
+            fi
+        done
+    done
+
     # NoCertificate path: server requests but doesn't require, our
     # client offers no cert and sends empty Certificate.
     cleanup
@@ -1465,19 +1498,38 @@ for cred in p256 p384 rsa ed25519; do
     "$SERVER" "$CERT_DIR/${cred}.crt" "$CERT_DIR/${cred}.key" --external-sign > /tmp/extsign_${cred}.log 2>&1 &
     wait_for_port
     if grep -q "External signer: enabled" /tmp/extsign_${cred}.log; then
-        pass "external signer ($cred): server holds no private key"
+        pass "external signer ($cred): TLS side holds no private key"
     else
         fail "external signer ($cred): server did not enable the callback"
     fi
     for ver in tls1_3 tls1_2; do
-        if [ "$cred" = "ed25519" ] && [ "$ver" = "tls1_2" ]; then
-            continue   # no Ed25519 ServerKeyExchange suites offered by s_client here
-        fi
+        #  Only the echoed line proves the handshake: OpenSSL prints
+        #  "verify return" while still processing the Certificate, before
+        #  the CertificateVerify / ServerKeyExchange signature is checked.
         output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -$ver -quiet 2>&1 || true)
-        if echo "$output" | grep -qi "hello\|verify return"; then
-            pass "external signer ($cred, $ver): handshake completes"
+        if echo "$output" | grep -qx "hello"; then
+            pass "external signer ($cred, $ver): handshake completes, data echoed"
         else
             fail "external signer ($cred, $ver): handshake failed: $(echo "$output" | head -2 | tr '\n' ' ')"
+        fi
+    done
+    cleanup
+done
+
+#  Fail-closed on the wire: a signer that returns a wrong signature, or
+#  refuses, must end the handshake with our internal_error alert (80) and
+#  never echo. Exercises the 1.3 CertificateVerify and 1.2 ServerKeyExchange
+#  paths of verify-before-wire with a P-256 key.
+for mode in corrupt refuse; do
+    cleanup
+    "$SERVER" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" --external-sign --external-sign-$mode > /tmp/extsign_$mode.log 2>&1 &
+    wait_for_port
+    for ver in tls1_3 tls1_2; do
+        output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -$ver 2>&1 || true)
+        if ! echo "$output" | grep -qx "hello" && echo "$output" | grep -qE "alert number 80|internal error"; then
+            pass "external signer $mode ($ver): refused with internal_error, nothing echoed"
+        else
+            fail "external signer $mode ($ver): expected internal_error alert: $(echo "$output" | grep -iE "alert|hello" | head -2 | tr '\n' ' ')"
         fi
     done
     cleanup
@@ -1500,7 +1552,14 @@ for d in /sys/bus/usb/devices/*; do
         break
     fi
 done
-if [ -x "$YK_SERVER" ] && [ -n "$YK_NODE" ] && [ -w "$YK_NODE" ] && ! pgrep -x pcscd >/dev/null; then
+#  Skip (never fail) unless the token actually holds a certificate in 9e:
+#  a FIDO-only key, an empty slot or a non-ECDSA key is not a regression.
+YK_PROBE="$REPO_ROOT/../sparkpiv/examples/bin/piv_probe"
+YK_READY=0
+if [ -x "$YK_SERVER" ] && [ -n "$YK_NODE" ] && [ -w "$YK_NODE" ] && ! pgrep -x pcscd >/dev/null && [ -x "$YK_PROBE" ]; then
+    if timeout 20 "$YK_PROBE" 2>/dev/null | grep -q "slot 9e: certificate"; then YK_READY=1; fi
+fi
+if [ "$YK_READY" = 1 ]; then
     echo "--- YubiKey PIV identity: token signs the handshake (slot 9e, no PIN) ---"
     cleanup
     "$YK_SERVER" 9e "$PORT" > /tmp/yubikey_server.log 2>&1 &
@@ -1512,15 +1571,15 @@ if [ -x "$YK_SERVER" ] && [ -n "$YK_NODE" ] && [ -w "$YK_NODE" ] && ! pgrep -x p
     fi
     for ver in tls1_3 tls1_2; do
         output=$(echo "hello" | timeout 20 openssl s_client -connect 127.0.0.1:$PORT -$ver -quiet 2>&1 || true)
-        if echo "$output" | grep -qi "hello\|verify return"; then
-            pass "yubikey: $ver handshake signed by the token"
+        if echo "$output" | grep -qx "hello"; then
+            pass "yubikey: $ver handshake signed by the token, data echoed"
         else
             fail "yubikey: $ver handshake failed: $(echo "$output" | head -2 | tr '\n' ' ')"
         fi
     done
     cleanup
 else
-    echo "--- YubiKey PIV identity: skipped (needs bin/examples/tls_yubikey_server, a writable YubiKey device node, no pcscd) ---"
+    echo "--- YubiKey PIV identity: skipped (needs tls_yubikey_server, sparkpiv piv_probe, a writable YubiKey with a certificate in slot 9e, no pcscd) ---"
 fi
 
 TOTAL=$((PASS + FAIL))

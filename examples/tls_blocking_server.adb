@@ -427,7 +427,8 @@ begin
 
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &
-                " [--mtls <ca.pem>] [--staple <ocsp.der>] [--external-sign]");
+                " [--mtls <ca.pem>] [--staple <ocsp.der>] [--external-sign]" &
+                " [--external-sign-corrupt|--external-sign-refuse]");
       return;
    end if;
 
@@ -447,6 +448,10 @@ begin
    for I in 3 .. Ada.Command_Line.Argument_Count loop
       if Ada.Command_Line.Argument (I) = "--external-sign" then
          External_Sign := True;
+      elsif Ada.Command_Line.Argument (I) = "--external-sign-corrupt" then
+         Software_Signer.Corrupt_Output := True;   --  test: wrong signature
+      elsif Ada.Command_Line.Argument (I) = "--external-sign-refuse" then
+         Software_Signer.Refuse := True;           --  test: signer fails
       end if;
    end loop;
    if External_Sign then
@@ -484,28 +489,29 @@ begin
       end if;
    end loop;
 
-   --  Check for --mtls / --mtls-require flag
-   if Ada.Command_Line.Argument_Count >= 4
-      and then (Ada.Command_Line.Argument (3) = "--mtls"
-                or else Ada.Command_Line.Argument (3) = "--mtls-require")
-   then
-      declare
-         Roots_OK : Boolean;
-      begin
-         Credentials.Load_Trust_Store
-           (Roots, Ada.Command_Line.Argument (4), Roots_OK);
-         if Roots_OK then
-            MTLS := True;
-            MTLS_Require :=
-              Ada.Command_Line.Argument (3) = "--mtls-require";
-            Put_Line ("mTLS enabled (trust: " &
-                      Ada.Command_Line.Argument (4)
-                      & (if MTLS_Require then ", REQUIRED)" else ")"));
-         else
-            Put_Line ("Warning: failed to load trust store, mTLS disabled");
-         end if;
-      end;
-   end if;
+   --  --mtls <ca.pem> / --mtls-require <ca.pem>, any position after the key
+   for I in 3 .. Ada.Command_Line.Argument_Count - 1 loop
+      if Ada.Command_Line.Argument (I) = "--mtls"
+        or else Ada.Command_Line.Argument (I) = "--mtls-require"
+      then
+         declare
+            Roots_OK : Boolean;
+         begin
+            Credentials.Load_Trust_Store
+              (Roots, Ada.Command_Line.Argument (I + 1), Roots_OK);
+            if Roots_OK then
+               MTLS := True;
+               MTLS_Require :=
+                 Ada.Command_Line.Argument (I) = "--mtls-require";
+               Put_Line ("mTLS enabled (trust: " &
+                         Ada.Command_Line.Argument (I + 1)
+                         & (if MTLS_Require then ", REQUIRED)" else ")"));
+            else
+               Put_Line ("Warning: failed to load trust store, mTLS disabled");
+            end if;
+         end;
+      end if;
+   end loop;
 
    Put_Line ("=== SPARKTLS Blocking Server ===");
    Put_Line ("Listening on 0.0.0.0:" & Port'Image);

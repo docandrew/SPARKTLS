@@ -20,13 +20,15 @@ package body Software_Signer is
    end Init;
 
    procedure Sign
-     (Scheme  : in     Maybe_Sig_Scheme;
+     (Id      : in     Identity;
+      Scheme  : in     Maybe_Sig_Scheme;
       Message : in     Byte_Seq;
       Digest  : in     Byte_Seq;
       Sig     :    out Byte_Seq;
       Sig_Len :    out N32;
       Status  :    out Sign_Status)
    is
+      pragma Unreferenced (Id);   --  one key here; a multi-identity signer would match Id.Cert
       OK : Boolean := False;
    begin
       Sig := (others => 0);
@@ -38,12 +40,13 @@ package body Software_Signer is
 
       case Scheme is
          when Sig_Ed25519 =>
-            --  PureEdDSA: the message, never a digest.
+            --  PureEdDSA: the message, never a digest. An empty message is
+            --  never a TLS input; refuse rather than sign it.
             declare
                SM : Byte_Seq (0 .. Message'Length + 63);
                M  : constant Byte_Seq (0 .. Message'Length - 1) := Message;
             begin
-               if Sig'Length < 64 then
+               if Sig'Length < 64 or else Message'Length = 0 then
                   return;
                end if;
                SPARKTLSCrypto.Ed25519.Sign (SM, M, Key_Id.Ed25519_Key);
@@ -193,7 +196,10 @@ package body Software_Signer is
 
       if OK then
          if Corrupt_Output and then Sig_Len > 0 then
-            Sig (Sig'First) := Sig (Sig'First) xor 16#01#;
+            --  Flip the LAST byte: still well-formed (DER tag/length and
+            --  RSA range untouched), so what fails is the verification
+            --  itself, not a parser or range check in front of it.
+            Sig (Sig'First + Sig_Len - 1) := Sig (Sig'First + Sig_Len - 1) xor 16#01#;
          end if;
          Status := Signed;
       end if;
