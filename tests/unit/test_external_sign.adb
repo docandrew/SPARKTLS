@@ -245,10 +245,10 @@ begin
    --  path: the signer gets the digest only). Correct, then corrupt, then
    --  refused; and Ed25519 refused before the signer is ever called.
    declare
-      CV12  : Byte_Seq (0 .. 1023);
+      CV12  : Byte_Seq (0 .. Handshake.TLS12.Max_Certificate_Verify_12 - 1);
       L12   : N32;
       L12b  : N32;
-      CV12b : Byte_Seq (0 .. 1023);
+      CV12b : Byte_Seq (0 .. Handshake.TLS12.Max_Certificate_Verify_12 - 1);
    begin
       Mode := 0;
       Handshake.TLS12.Build_Certificate_Verify_12
@@ -289,7 +289,7 @@ begin
       declare
          RSA_Pub : aliased Identity;
          P_OK    : Boolean;
-         CVr     : Byte_Seq (0 .. 1023);
+         CVr     : Byte_Seq (0 .. Handshake.TLS12.Max_Certificate_Verify_12 - 1);
          Lr      : N32;
       begin
          Credentials.Load_Identity (RSA_Id, Ada.Command_Line.Argument (3), Ada.Command_Line.Argument (4), RSA_OK);
