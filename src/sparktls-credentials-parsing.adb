@@ -396,7 +396,11 @@ is
    ----------------------------------------------------------------------------
 
    procedure Load_Identity_PEM
-     (Id : out Identity; Cert_PEM : String; Key_PEM : String; OK : out Boolean)
+     (Id          : out Identity;
+      Cert_PEM    : String;
+      Key_PEM     : String;
+      OK          : out Boolean;
+      Public_Only : Boolean := False)
    is
       Cert_Result : PEM.Decode_Result;
       Key_Result  : PEM.Decode_Result;
@@ -425,18 +429,23 @@ is
          Id := Default_Id;
       end;
 
-      if Cert_PEM'Length = 0 or Key_PEM'Length = 0 then
+      if Cert_PEM'Length = 0 or (not Public_Only and Key_PEM'Length = 0) then
          return;
       end if;
 
-      --  1+2: Decode key, extract raw bytes
-      PEM.Decode (Key_PEM, Key_Result);
-      if not Key_Result.OK or else Key_Result.Label /= PEM.Label_Private_Key then
-         return;
-      end if;
-      Extract_Key (Key_Result.DER, Key_Result.DER_Len, Key_Buf, Key_Len, Key_OK);
-      if not Key_OK or Key_Len = 0 then
-         return;
+      --  1+2: Decode key, extract raw bytes (skipped for a public-only
+      --  identity: there is no key, and Key_Buf stays zero)
+      Key_Buf := (others => 0);
+      Key_Len := 0;
+      if not Public_Only then
+         PEM.Decode (Key_PEM, Key_Result);
+         if not Key_Result.OK or else Key_Result.Label /= PEM.Label_Private_Key then
+            return;
+         end if;
+         Extract_Key (Key_Result.DER, Key_Result.DER_Len, Key_Buf, Key_Len, Key_OK);
+         if not Key_OK or Key_Len = 0 then
+            return;
+         end if;
       end if;
 
       --  3: Decode leaf cert (first PEM block of Cert_PEM)
@@ -445,9 +454,14 @@ is
          return;
       end if;
 
-      --  4: Initialize Id with leaf cert and key
-      Cert_Verify.Set_Identity
-        (Id, Cert_Result.DER (0 .. Cert_Result.DER_Len - 1), Key_Buf (0 .. Key_Len - 1), Set_OK);
+      --  4: Initialize Id with leaf cert and key (or the cert alone)
+      if Public_Only then
+         Cert_Verify.Set_Identity_Public
+           (Id, Cert_Result.DER (0 .. Cert_Result.DER_Len - 1), Set_OK);
+      else
+         Cert_Verify.Set_Identity
+           (Id, Cert_Result.DER (0 .. Cert_Result.DER_Len - 1), Key_Buf (0 .. Key_Len - 1), Set_OK);
+      end if;
       if not Set_OK then
          return;
       end if;

@@ -67,6 +67,25 @@ is
       Parsing.Load_Identity_PEM (Id, Cert_PEM, Key_PEM, OK);
    end Load_Identity_PEM;
 
+   procedure Load_Identity_Public_PEM
+     (Id : out Identity; Cert_PEM : String; OK : out Boolean) is
+   begin
+      Parsing.Load_Identity_PEM (Id, Cert_PEM, "", OK, Public_Only => True);
+   end Load_Identity_Public_PEM;
+
+   procedure Load_Identity_Public
+     (Id : out Identity; Cert_Path : String; OK : out Boolean)
+   is
+      Cert_Text : constant String := Read_File (Cert_Path);
+   begin
+      Id := (others => <>);
+      OK := False;
+      if Cert_Text'Length = 0 then
+         return;
+      end if;
+      Load_Identity_Public_PEM (Id, Cert_Text, OK);
+   end Load_Identity_Public;
+
    --  Load_Identity: file I/O wrapper around Load_Identity_PEM
    procedure Load_Identity
      (Id : out Identity; Cert_Path : String; Key_Path : String; OK : out Boolean)

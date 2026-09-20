@@ -361,6 +361,22 @@ is
        and then X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
        and then Key'First = 0;
 
+   --  Load an identity from its certificate alone: no private key. The key
+   --  kind (Sign_Algo) and, for RSA, the modulus and exponent are taken from
+   --  the certificate's SubjectPublicKeyInfo. Such an identity can only sign
+   --  through Config.Sign; a signing site that finds no
+   --  callback fails the handshake closed.
+   procedure Set_Identity_Public
+     (Id       : out Identity;
+      Cert_DER : X509.Byte_Seq;
+      OK       : out Boolean)
+   with
+     Pre =>
+       Cert_DER'First = 0
+       and then Cert_DER'Last < X509.N32'Last
+       and then X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER),
+     Post => (if OK then Id.Has_Identity and not Id.Has_Private_Key);
+
    --  Add an intermediate certificate to the identity's chain.
    procedure Add_Intermediate
      (Id : in out Identity; DER : X509.Byte_Seq; OK : out Boolean)

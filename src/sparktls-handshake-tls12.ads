@@ -225,6 +225,7 @@ is
      (HC     : in Handshake_Context;
       Id     : in Identity;
       Random : in Live_Random_Fn;
+      Sign   : in Sign_Fn;
       Result : out Byte_Seq;
       Len    : out N32)
    with
@@ -366,6 +367,7 @@ is
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Random          : in Live_Random_Fn;
+      Sign            : in Sign_Fn;
       Result          : out Byte_Seq;
       Len             : out N32)
    with

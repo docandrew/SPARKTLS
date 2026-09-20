@@ -1336,6 +1336,7 @@ is
             Id              => HC.Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
             Random          => HC.Cfg.Random,
+            Sign            => HC.Cfg.Sign,
             Result          => CV_Buf,
             Len             => CV_Len);
       elsif Use_384_For_CV then
@@ -1345,6 +1346,7 @@ is
             Id              => HC.Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
             Random          => HC.Cfg.Random,
+            Sign            => HC.Cfg.Sign,
             Result          => CV_Buf,
             Len             => CV_Len);
       else
@@ -1354,6 +1356,7 @@ is
             Id              => HC.Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
             Random          => HC.Cfg.Random,
+            Sign            => HC.Cfg.Sign,
             Result          => CV_Buf,
             Len             => CV_Len);
       end if;

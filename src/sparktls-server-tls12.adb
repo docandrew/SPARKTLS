@@ -749,7 +749,7 @@ is
             SKE_Len : N32;
          begin
             pragma Assert (S.HC.KE.Negotiated);
-            Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
+            Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, Cfg.Sign, SKE_Buf, SKE_Len);
             --  An ECDHE suite was negotiated (KE.Negotiated), so a
             --  ServerKeyExchange is mandatory here. A zero length means the
             --  signature step failed closed (RSA verify-after-sign mismatch,
