@@ -119,20 +119,30 @@ is
                     and then B64_Len mod 4 = 0
                     and then SPARKTLSCrypto.Base64.Validate (B64_Buf (1 .. B64_Len))
                   then
+                     --  Buffer-based decode: no secondary stack in library
+                     --  code. The validated slice is a Base64_String by
+                     --  its predicate.
                      declare
-                        B64     : constant SPARKTLSCrypto.Base64.Base64_String :=
-                          SPARKTLSCrypto.Base64.Construct (B64_Buf (1 .. B64_Len));
-                        DER_Str : constant String := SPARKTLSCrypto.Base64.Decode (B64);
+                        DER_Len : constant Natural :=
+                          SPARKTLSCrypto.Base64.Decoded_Length
+                            (SPARKTLSCrypto.Base64.Base64_String (B64_Buf (1 .. B64_Len)));
                      begin
-                        if DER_Str'Length > Max_Cert_DER then
+                        if DER_Len > Max_Cert_DER then
                            Result.Oversize := True;
-                        elsif DER_Str'Length > 0 then
-                           for I in 0 .. DER_Str'Length - 1 loop
-                              Result.DER (X509.N32 (I)) :=
-                                X509.Byte (Character'Pos (DER_Str (DER_Str'First + I)));
-                           end loop;
-                           Result.DER_Len := X509.N32 (DER_Str'Length);
-                           Result.OK := True;
+                        elsif DER_Len > 0 then
+                           declare
+                              DER : Byte_Seq (0 .. N32 (Max_Cert_DER) - 1);
+                              Got : Natural;
+                           begin
+                              SPARKTLSCrypto.Base64.Decode
+                                (SPARKTLSCrypto.Base64.Base64_String (B64_Buf (1 .. B64_Len)),
+                                 DER, Got);
+                              for I in 0 .. Got - 1 loop
+                                 Result.DER (X509.N32 (I)) := X509.Byte (DER (N32 (I)));
+                              end loop;
+                              Result.DER_Len := X509.N32 (Got);
+                              Result.OK := True;
+                           end;
                         end if;
                      end;
                   end if;

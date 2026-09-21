@@ -30,7 +30,7 @@ SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
 SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-c47b947c69551e40914f0f16935886234eeb00ac}"   # master 2026-09-19, perf tiers + hardening (PR merged)
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-85e55fcc2cf2bc69c805e6c4df8abf3ec10caa2e}"   # master 2026-09-21, scrub pass + buffer-only Base64 (PR merged)
 
 
 # ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).

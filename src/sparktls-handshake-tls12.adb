@@ -200,6 +200,7 @@ is
                   Sig_Len   => Sig_Len,
                   OK        => OK);
          end case;
+         Sanitize (Byte_Seq (Blind));
       end;
    end Sign_SKE_RSA_PSS;
 
@@ -286,6 +287,7 @@ is
                   Sig_Len   => Sig_Len,
                   OK        => OK);
          end case;
+         Sanitize (Byte_Seq (Blind));
       end;
    end Sign_SKE_RSA_PKCS1;
 
@@ -322,21 +324,26 @@ is
          H  => Bytes_32 (H),
          K  => K_Bytes,
          OK => K_OK);
-      if not K_OK then
-         return;
+      if K_OK then
+         Random.all (Blind);
+         SPARKTLSCrypto.P256.ECDSA.Sign
+           (Hash  => H,
+            D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
+            K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+            Blind => Blind,
+            R_Out => R_Half,
+            S_Out => S_Half,
+            OK    => OK);
+         if OK then
+            Handshake.ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
+         end if;
       end if;
-      Random.all (Blind);
-      SPARKTLSCrypto.P256.ECDSA.Sign
-        (Hash  => H,
-         D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
-         K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
-         Blind => Blind,
-         R_Out => R_Half,
-         S_Out => S_Half,
-         OK    => OK);
-      if OK then
-         Handshake.ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
-      end if;
+      --  A leaked nonce is the private key; scrub it, the blind and the
+      --  signature halves on every path.
+      Sanitize (Byte_Seq (K_Bytes));
+      Sanitize (Blind);
+      Sanitize (Byte_Seq (R_Half));
+      Sanitize (Byte_Seq (S_Half));
    end Sign_SKE_ECDSA_P256;
 
    --  ecdsa_secp384r1_sha384 over the SKE signature input, RFC 6979
@@ -363,19 +370,21 @@ is
          H  => Bytes_48 (H),
          K  => K_Bytes,
          OK => K_OK);
-      if not K_OK then
-         return;
+      if K_OK then
+         SPARKTLSCrypto.P384.ECDSA.Sign
+           (Hash  => H,
+            D     => Byte_Seq (Id.ECDSA_P384_Key),
+            K     => Byte_Seq (K_Bytes),
+            R_Out => R_Half,
+            S_Out => S_Half,
+            OK    => OK);
+         if OK then
+            Handshake.ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
+         end if;
       end if;
-      SPARKTLSCrypto.P384.ECDSA.Sign
-        (Hash  => H,
-         D     => Byte_Seq (Id.ECDSA_P384_Key),
-         K     => Byte_Seq (K_Bytes),
-         R_Out => R_Half,
-         S_Out => S_Half,
-         OK    => OK);
-      if OK then
-         Handshake.ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
-      end if;
+      Sanitize (Byte_Seq (K_Bytes));
+      Sanitize (R_Half);
+      Sanitize (S_Half);
    end Sign_SKE_ECDSA_P384;
 
    --  ServerKeyExchange ECParameters (RFC 4492 5.4): curve_type(1) ||
@@ -562,6 +571,7 @@ is
                begin
                   SK := Id.Ed25519_Key;
                   SPARKTLSCrypto.Ed25519.Sign (SM, Sig_Input (0 .. Sig_Input_Len - 1), SK);
+                  Sanitize (Byte_Seq (SK));
                   Sig (0 .. 63) := SM (0 .. 63);
                   Sig_Len := 64;
                   Sig_OK := True;
@@ -1126,54 +1136,55 @@ is
             end;
 
          when Sig_RSA_PSS_SHA384 =>
-            if TH'Length /= 48 then
-               return;
+            --  A transcript hash of the wrong width fails closed (OK stays
+            --  False) and still reaches the scrub below.
+            if TH'Length = 48 then
+               declare
+                  Salt : Bytes_48;
+               begin
+                  Random.all (Byte_Seq (Salt));
+                  SPARKTLSCrypto.RSA.Sign_PSS
+                    (M_Hash    => TH (TH'First .. TH'First + 47),
+                     Hash_Len  => 48,
+                     Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA384,
+                     Modulus   => Id.RSA_Modulus,
+                     Mod_Len   => Id.RSA_Mod_Len,
+                     Priv_Exp  => Id.RSA_Priv_Exp,
+                     Pub_Exp   => Id.RSA_Pub_Exp,
+                     CRT       => Id.RSA_CRT,
+                     Blind     => Blind,
+                     Salt      => Byte_Seq (Salt),
+                     Signature => Sig,
+                     Sig_Len   => Sig_Len,
+                     OK        => OK);
+               end;
             end if;
-            declare
-               Salt : Bytes_48;
-            begin
-               Random.all (Byte_Seq (Salt));
-               SPARKTLSCrypto.RSA.Sign_PSS
-                 (M_Hash    => TH (TH'First .. TH'First + 47),
-                  Hash_Len  => 48,
-                  Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA384,
-                  Modulus   => Id.RSA_Modulus,
-                  Mod_Len   => Id.RSA_Mod_Len,
-                  Priv_Exp  => Id.RSA_Priv_Exp,
-                  Pub_Exp   => Id.RSA_Pub_Exp,
-                  CRT       => Id.RSA_CRT,
-                  Blind     => Blind,
-                  Salt      => Byte_Seq (Salt),
-                  Signature => Sig,
-                  Sig_Len   => Sig_Len,
-                  OK        => OK);
-            end;
 
          when others =>
             --  0x0806
-            if TH'Length /= 64 then
-               return;
+            if TH'Length = 64 then
+               declare
+                  Salt : Bytes_64;
+               begin
+                  Random.all (Byte_Seq (Salt));
+                  SPARKTLSCrypto.RSA.Sign_PSS
+                    (M_Hash    => TH (TH'First .. TH'First + 63),
+                     Hash_Len  => 64,
+                     Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA512,
+                     Modulus   => Id.RSA_Modulus,
+                     Mod_Len   => Id.RSA_Mod_Len,
+                     Priv_Exp  => Id.RSA_Priv_Exp,
+                     Pub_Exp   => Id.RSA_Pub_Exp,
+                     CRT       => Id.RSA_CRT,
+                     Blind     => Blind,
+                     Salt      => Byte_Seq (Salt),
+                     Signature => Sig,
+                     Sig_Len   => Sig_Len,
+                     OK        => OK);
+               end;
             end if;
-            declare
-               Salt : Bytes_64;
-            begin
-               Random.all (Byte_Seq (Salt));
-               SPARKTLSCrypto.RSA.Sign_PSS
-                 (M_Hash    => TH (TH'First .. TH'First + 63),
-                  Hash_Len  => 64,
-                  Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA512,
-                  Modulus   => Id.RSA_Modulus,
-                  Mod_Len   => Id.RSA_Mod_Len,
-                  Priv_Exp  => Id.RSA_Priv_Exp,
-                  Pub_Exp   => Id.RSA_Pub_Exp,
-                  CRT       => Id.RSA_CRT,
-                  Blind     => Blind,
-                  Salt      => Byte_Seq (Salt),
-                  Signature => Sig,
-                  Sig_Len   => Sig_Len,
-                  OK        => OK);
-            end;
       end case;
+      Sanitize (Byte_Seq (Blind));
    end Sign_CV12_RSA_PSS;
 
    --  TLS 1.2 CertificateVerify RSA PKCS#1 v1.5 over a pre-computed
@@ -1225,6 +1236,7 @@ is
          Signature => Sig,
          Sig_Len   => Sig_Len,
          OK        => OK);
+      Sanitize (Byte_Seq (Blind));
    end Sign_CV12_RSA_PKCS1;
 
    --  ecdsa_secp256r1_sha256 over a pre-computed hash, RFC 6979 nonce,
@@ -1254,21 +1266,24 @@ is
       --  RFC 6979 deterministic nonce.
       SPARKTLSCrypto.RFC6979.Derive_K_P256
         (D => Bytes_32 (Id.ECDSA_P256_Key), H => H, K => K_Bytes, OK => K_OK);
-      if not K_OK then
-         return;
+      if K_OK then
+         Random.all (Blind);
+         SPARKTLSCrypto.P256.ECDSA.Sign
+           (Hash  => SPARKTLSCrypto.Hashing.SHA256.Digest (H),
+            D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
+            K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+            Blind => Blind,
+            R_Out => R_Half,
+            S_Out => S_Half,
+            OK    => OK);
+         if OK then
+            Handshake.ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
+         end if;
       end if;
-      Random.all (Blind);
-      SPARKTLSCrypto.P256.ECDSA.Sign
-        (Hash  => SPARKTLSCrypto.Hashing.SHA256.Digest (H),
-         D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
-         K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
-         Blind => Blind,
-         R_Out => R_Half,
-         S_Out => S_Half,
-         OK    => OK);
-      if OK then
-         Handshake.ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
-      end if;
+      Sanitize (Byte_Seq (K_Bytes));
+      Sanitize (Blind);
+      Sanitize (Byte_Seq (R_Half));
+      Sanitize (Byte_Seq (S_Half));
    end Sign_Hash_ECDSA_P256;
 
    --  ecdsa_secp384r1_sha384 over a pre-computed hash, RFC 6979 nonce
@@ -1291,19 +1306,21 @@ is
       --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
       SPARKTLSCrypto.RFC6979.Derive_K_P384
         (D => Bytes_48 (Id.ECDSA_P384_Key), H => H, K => K_Bytes, OK => K_OK);
-      if not K_OK then
-         return;
+      if K_OK then
+         SPARKTLSCrypto.P384.ECDSA.Sign
+           (Hash  => SPARKNaCl.Hashing.SHA384.Digest (H),
+            D     => Byte_Seq (Id.ECDSA_P384_Key),
+            K     => Byte_Seq (K_Bytes),
+            R_Out => R_Half,
+            S_Out => S_Half,
+            OK    => OK);
+         if OK then
+            Handshake.ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
+         end if;
       end if;
-      SPARKTLSCrypto.P384.ECDSA.Sign
-        (Hash  => SPARKNaCl.Hashing.SHA384.Digest (H),
-         D     => Byte_Seq (Id.ECDSA_P384_Key),
-         K     => Byte_Seq (K_Bytes),
-         R_Out => R_Half,
-         S_Out => S_Half,
-         OK    => OK);
-      if OK then
-         Handshake.ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
-      end if;
+      Sanitize (Byte_Seq (K_Bytes));
+      Sanitize (R_Half);
+      Sanitize (S_Half);
    end Sign_Hash_ECDSA_P384;
 
    procedure Build_Certificate_Verify_12
@@ -1395,6 +1412,7 @@ is
             begin
                SK := Id.Ed25519_Key;
                SPARKTLSCrypto.Ed25519.Sign (SM, Transcript_Hash, SK);
+               Sanitize (Byte_Seq (SK));
                Sig (0 .. 63) := SM (0 .. 63);
                Sig_Len := 64;
                Sig_OK := True;
