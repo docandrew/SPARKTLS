@@ -11,6 +11,17 @@ with SPARKTLS.Credentials;
 with SPARKTLSCrypto.RSA;
 
 procedure Bench_RSA is
+
+   --  Deterministic filler for the identity-load blinds: this test is
+   --  about parsing and signing, not about the blind's randomness.
+   procedure Test_Random (Output : out Byte_Seq) is
+      V : Byte := 16#5B#;
+   begin
+      for I in Output'Range loop
+         V := V * 13 + 7;
+         Output (I) := V;
+      end loop;
+   end Test_Random;
    Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
    Id     : SPARKTLS.Identity;
    OK     : Boolean;
@@ -39,7 +50,8 @@ begin
    S_It := Arg (3, 20);
    V_It := Arg (4, 500);
    SPARKTLS.Credentials.Load_Identity
-     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), OK);
+     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
+      Test_Random'Unrestricted_Access, OK);
    if not OK or else Id.Sign_Algo /= Sign_RSA_PSS then
       Put_Line ("not an RSA identity");
       return;

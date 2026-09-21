@@ -145,7 +145,8 @@ begin
       return;
    end if;
    Credentials.Load_Identity
-     (Key_Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), Id_OK);
+     (Key_Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
+      Fixed_Random'Unrestricted_Access, Id_OK);
    Check ("private identity loads", Id_OK and then Key_Id.Has_Private_Key);
    Credentials.Load_Identity_Public (Pub_Id, Ada.Command_Line.Argument (1), Pub_OK);
    Check ("public-only identity loads", Pub_OK);
@@ -292,7 +293,8 @@ begin
          CVr     : Byte_Seq (0 .. Handshake.TLS12.Max_Certificate_Verify_12 - 1);
          Lr      : N32;
       begin
-         Credentials.Load_Identity (RSA_Id, Ada.Command_Line.Argument (3), Ada.Command_Line.Argument (4), RSA_OK);
+         Credentials.Load_Identity (RSA_Id, Ada.Command_Line.Argument (3), Ada.Command_Line.Argument (4),
+                                    Fixed_Random'Unrestricted_Access, RSA_OK);
          Credentials.Load_Identity_Public (RSA_Pub, Ada.Command_Line.Argument (3), P_OK);
          Check ("RSA identities load (private + public-only)", RSA_OK and P_OK and RSA_Pub.Sign_Algo = Sign_RSA_PSS);
          Mode := 0;

@@ -10,6 +10,16 @@
 # key, is 165/218 passed, 53 failed under this one. Every remaining entry is a
 # documented decision, none an open bug:
 #
+#  2026-09-21: tls_blocking_server now also carries an RSA identity (run.sh
+#  --identity), selected when the client offers an ECDHE_RSA suite with a
+#  groups list that omits secp256r1 (verified with openssl s_client). Anvil's
+#  failing combinations are ECDHE_ECDSA-only suites with X25519-only groups,
+#  which no identity can serve; the result is unchanged at 181/218. RFC 8422
+#  5.3 verbatim: "If the client has used a Supported Elliptic Curves
+#  Extension, the public key in the server's certificate MUST respect the
+#  client's choice of elliptic curves. A server that cannot satisfy this
+#  requirement MUST NOT choose an ECC cipher suite in its ServerHello
+#  message." Family A stands.
 #  A. INTENTIONAL (RFC 8422 5.3): every TLS 1.2 test loses the parameter
 #     combinations where the client lists ECDH_X25519 but not SECP256R1 in
 #     supported_groups. "If the client has used a Supported Elliptic Curves

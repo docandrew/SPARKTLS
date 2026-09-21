@@ -1650,12 +1650,16 @@ is
       end if;
    end Shared_Secret_P256_12;
 
-   procedure Shared_Secret_P384_12 (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   procedure Shared_Secret_P384_12
+     (KE : in out KE_State; Random : in Live_Random_Fn; OK : out Boolean; Err : out Error_Code)
    is
       SS    : Bytes_48;
       OK384 : Boolean;
+      Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
    begin
-      SPARKTLSCrypto.P384.Point.P384_ECDHE (SS, OK384, KE.P384_SK, KE.P384_PK);
+      Random.all (Blind);
+      SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded (SS, OK384, KE.P384_SK, KE.P384_PK, Blind);
+      Sanitize (Blind);
       if OK384 then
          KE.Shared := (others => 0);
          KE.Shared (0 .. 47) := SS;
@@ -1708,7 +1712,7 @@ is
             Shared_Secret_P256_12 (KE, Random, OK, Err);
 
          when Group_Secp384r1 =>
-            Shared_Secret_P384_12 (KE, OK, Err);
+            Shared_Secret_P384_12 (KE, Random, OK, Err);
 
          when Group_X25519MLKEM768 =>
             --  TLS 1.3 only; never negotiated by the TLS 1.2 server.

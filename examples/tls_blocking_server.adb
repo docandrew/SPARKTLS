@@ -29,6 +29,12 @@ with SPARKTLS.Ticket_Keys;
 procedure TLS_Blocking_Server is
 
    Id      : aliased SPARKTLS.Identity;
+   --  --identity <cert> <key>: further identities the server may select
+   --  from by the client's signature_algorithms / groups / cipher suites
+   --  (Config.Identities), e.g. an RSA certificate next to the P-256 one.
+   Extra_Ids   : array (2 .. 4) of aliased SPARKTLS.Identity;
+   Extra_Count : Natural := 0;
+   Id_Set      : aliased SPARKTLS.Identity_Set;
    Id_OK   : Boolean;
    Roots   : aliased SPARKTLS.Trust_Store;
    MTLS    : Boolean := False;
@@ -243,6 +249,7 @@ procedure TLS_Blocking_Server is
 
       S := Server.Configure
         ((Local               => Id'Unchecked_Access,
+          Identities          => (if Extra_Count > 0 then Id_Set'Unchecked_Access else null),
           Random              => Entropy_Random.Random'Access,
           Trust               => (if MTLS then Roots'Unchecked_Access
                                   else null),
@@ -427,6 +434,7 @@ begin
 
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &
+                " [--identity <cert.pem> <key.pem>]..." &
                 " [--mtls <ca.pem>] [--staple <ocsp.der>] [--external-sign]" &
                 " [--external-sign-corrupt|--external-sign-refuse]");
       return;
@@ -436,6 +444,7 @@ begin
      (Id,
       Ada.Command_Line.Argument (1),
       Ada.Command_Line.Argument (2),
+      Entropy_Random.Random'Access,
       Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load identity");
@@ -445,6 +454,39 @@ begin
    --  --external-sign (any position): hand the private key to the signer
    --  and reload the identity from the certificate alone, so the TLS side
    --  provably holds no key material.
+   for I in 3 .. Ada.Command_Line.Argument_Count - 2 loop
+      if Ada.Command_Line.Argument (I) = "--identity" then
+         if Extra_Count = Extra_Ids'Length then
+            Put_Line ("Too many --identity options");
+            return;
+         end if;
+         declare
+            X_OK : Boolean;
+            N    : constant Positive := Extra_Ids'First + Extra_Count;
+         begin
+            Credentials.Load_Identity
+              (Extra_Ids (N),
+               Ada.Command_Line.Argument (I + 1),
+               Ada.Command_Line.Argument (I + 2),
+               Entropy_Random.Random'Access,
+               X_OK);
+            if not X_OK then
+               Put_Line ("Failed to load identity " & Ada.Command_Line.Argument (I + 1));
+               return;
+            end if;
+            Extra_Count := Extra_Count + 1;
+         end;
+      end if;
+   end loop;
+   if Extra_Count > 0 then
+      Id_Set.Items (1) := Id'Unchecked_Access;
+      for K in 1 .. Extra_Count loop
+         Id_Set.Items (1 + K) := Extra_Ids (Extra_Ids'First + K - 1)'Unchecked_Access;
+      end loop;
+      Id_Set.Count := 1 + Extra_Count;
+      Put_Line ("Identities:" & Integer'Image (1 + Extra_Count) & " (selected per client)");
+   end if;
+
    for I in 3 .. Ada.Command_Line.Argument_Count loop
       if Ada.Command_Line.Argument (I) = "--external-sign" then
          External_Sign := True;

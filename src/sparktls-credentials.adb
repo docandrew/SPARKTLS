@@ -62,15 +62,19 @@ is
 
    --  Load_Identity_PEM delegates to SPARK-verified parsing
    procedure Load_Identity_PEM
-     (Id : out Identity; Cert_PEM : String; Key_PEM : String; OK : out Boolean) is
+     (Id       : out Identity;
+      Cert_PEM : String;
+      Key_PEM  : String;
+      Random   : Live_Random_Fn;
+      OK       : out Boolean) is
    begin
-      Parsing.Load_Identity_PEM (Id, Cert_PEM, Key_PEM, OK);
+      Parsing.Load_Identity_PEM (Id, Cert_PEM, Key_PEM, Random, OK);
    end Load_Identity_PEM;
 
    procedure Load_Identity_Public_PEM
      (Id : out Identity; Cert_PEM : String; OK : out Boolean) is
    begin
-      Parsing.Load_Identity_PEM (Id, Cert_PEM, "", OK, Public_Only => True);
+      Parsing.Load_Identity_PEM (Id, Cert_PEM, "", null, OK, Public_Only => True);
    end Load_Identity_Public_PEM;
 
    procedure Load_Identity_Public
@@ -88,7 +92,11 @@ is
 
    --  Load_Identity: file I/O wrapper around Load_Identity_PEM
    procedure Load_Identity
-     (Id : out Identity; Cert_Path : String; Key_Path : String; OK : out Boolean)
+     (Id        : out Identity;
+      Cert_Path : String;
+      Key_Path  : String;
+      Random    : Live_Random_Fn;
+      OK        : out Boolean)
    is
       Cert_Text : constant String := Read_File (Cert_Path);
       Key_Text  : constant String := Read_File (Key_Path);
@@ -100,7 +108,7 @@ is
          return;
       end if;
 
-      Load_Identity_PEM (Id, Cert_Text, Key_Text, OK);
+      Load_Identity_PEM (Id, Cert_Text, Key_Text, Random, OK);
    end Load_Identity;
 
    --  Load_Trust_Store: file I/O + PEM decode + per-cert Add_Root.

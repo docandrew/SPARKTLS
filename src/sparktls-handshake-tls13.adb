@@ -263,10 +263,12 @@ is
        and then HC.Server_Random = HC.Server_Random'Old
    is
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
-      PK_Enc : Byte_Seq (0 .. 96);
-      SS     : Bytes_48;
-      SS_OK  : Boolean;
-      Tmp_SK : Bytes_48;
+      PK_Enc  : Byte_Seq (0 .. 96);
+      SS      : Bytes_48;
+      SS_OK   : Boolean;
+      Tmp_SK  : Bytes_48;
+      Blind_G : Byte_Seq (0 .. 55);   --  generator multiplication
+      Blind_P : Byte_Seq (0 .. 55);   --  peer-point multiplication
    begin
       KS_Raw := (others => 0);
       KS_Raw_Len := 0;
@@ -279,9 +281,14 @@ is
       end if;
       HC.KE.P384_SK := Tmp_SK;
       Sanitize (Tmp_SK);
-      SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
-      SPARKTLSCrypto.P384.Point.P384_ECDHE
-        (Secret => SS, OK => SS_OK, SK => HC.KE.P384_SK, Peer_PK => HC.KE.P384_PK);
+      Gen_Random (Blind_G);
+      Gen_Random (Blind_P);
+      SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, HC.KE.P384_SK, Blind_G);
+      Sanitize (Blind_G);
+      SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded
+        (Secret => SS, OK => SS_OK, SK => HC.KE.P384_SK, Peer_PK => HC.KE.P384_PK,
+         Blind => Blind_P);
+      Sanitize (Blind_P);
       if not SS_OK then
          Sanitize (SS);
          HC.Ext_Parse_Err := Illegal_Parameter;
@@ -1289,7 +1296,7 @@ is
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
-      Random          : in Random_Bytes_Fn;
+      Random          : in Live_Random_Fn;
       Sign            : in Sign_Fn;
       Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
@@ -1363,14 +1370,7 @@ is
                SPARKTLSCrypto.RFC6979.Derive_K_P256
                  (D => Bytes_32 (Id.ECDSA_P256_Key), H => Bytes_32 (H), K => K_Bytes, OK => K_OK);
                if K_OK then
-                  --  Blinding is defence in depth; if no live CSPRNG is
-                  --  configured, a zero blind means no blinding (the scalar
-                  --  and coordinates are used as-is) and signing still works.
-                  if Random /= null then
-                     Random.all (Blind);
-                  else
-                     Blind := (others => 0);
-                  end if;
+                  Random.all (Blind);
                   SPARKTLSCrypto.P256.ECDSA.Sign
                     (Hash  => H,
                      D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
@@ -1401,15 +1401,18 @@ is
                K_OK    : Boolean;
                R_Half  : Byte_Seq (0 .. 47);
                S_Half  : Byte_Seq (0 .. 47);
+               Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
             begin
                --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
                SPARKTLSCrypto.RFC6979.Derive_K_P384
                  (D => Bytes_48 (Id.ECDSA_P384_Key), H => Bytes_48 (H), K => K_Bytes, OK => K_OK);
                if K_OK then
+                  Random.all (Blind);
                   SPARKTLSCrypto.P384.ECDSA.Sign
                     (Hash  => H,
                      D     => Byte_Seq (Id.ECDSA_P384_Key),
                      K     => Byte_Seq (K_Bytes),
+                     Blind => Blind,
                      R_Out => R_Half,
                      S_Out => S_Half,
                      OK    => Sig_OK);
@@ -1420,6 +1423,7 @@ is
                   Sig_OK := False;
                end if;
                Sanitize (Byte_Seq (K_Bytes));
+               Sanitize (Blind);
                Sanitize (R_Half);
                Sanitize (S_Half);
             end;

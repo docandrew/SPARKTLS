@@ -356,7 +356,7 @@ begin
          Id_OK : Boolean;
       begin
          SPARKTLS.Credentials.Load_Identity
-           (Id, Cert_Path (1 .. Cert_Len), Key_Path (1 .. Key_Len), Id_OK);
+           (Id, Cert_Path (1 .. Cert_Len), Key_Path (1 .. Key_Len), Entropy_Random.Random'Access, Id_OK);
          if not Id_OK then
             Put_Line ("FAIL: could not load client identity " & Cert_Path (1 .. Cert_Len));
             Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);

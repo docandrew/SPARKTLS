@@ -55,7 +55,7 @@ procedure Test_Crypto is
       Public_Key (D, Qx, Qy);
 
       --  Sign
-      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
+      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K, Byte_Seq'(0 .. 55 => 16#7E#), R_Out, S_Out, Sign_OK);
       Check ("P-384 Sign", Sign_OK);
       if not Sign_OK then return; end if;
       Put ("    s(0..5): ");

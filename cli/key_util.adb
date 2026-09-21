@@ -280,7 +280,25 @@ package body Key_Util is
                   Scalar_N (I) := Byte (Scalar_X (X509.N32 (I)));
                end loop;
 
-               P256_Mulgen (PK_Jac, Scalar_N, 32);
+               declare
+
+                  Blind_X : X509.Byte_Seq (0 .. 39);   --  scalar/coordinate blinding
+
+                  Blind   : Byte_Seq (0 .. 39);
+
+               begin
+
+                  Get_Random_Bytes (Blind_X);
+
+                  for I in N32 range 0 .. 39 loop
+
+                     Blind (I) := Byte (Blind_X (X509.N32 (I)));
+
+                  end loop;
+
+                  P256_Mulgen_Blinded (PK_Jac, Bytes_32 (Scalar_N), Blind);
+
+               end;
                P256_To_Affine (PK_Jac);
                P256_Encode (PK_Enc, PK_Jac);
 
@@ -346,7 +364,16 @@ package body Key_Util is
                   Scalar_N (I) := Byte (Scalar_X (X509.N32 (I)));
                end loop;
 
-               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, Scalar_N);
+               declare
+                  Blind_X : X509.Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+                  Blind   : Byte_Seq (0 .. 55);
+               begin
+                  Get_Random_Bytes (Blind_X);
+                  for I in N32 range 0 .. 55 loop
+                     Blind (I) := Byte (Blind_X (X509.N32 (I)));
+                  end loop;
+                  SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, Scalar_N, Blind);
+               end;
 
                for I in X509.N32 range 0 .. 96 loop
                   PK_X (I) := X509.Byte (PK_Enc (N32 (I)));
@@ -474,7 +501,25 @@ package body Key_Util is
                            Scalar_N (K) := Byte (R.DER (J + 2 + X509.N32 (K)));
                         end loop;
 
-                        P256_Mulgen (PK_Jac, Scalar_N, 32);
+                        declare
+
+                           Blind_X : X509.Byte_Seq (0 .. 39);   --  scalar/coordinate blinding
+
+                           Blind   : Byte_Seq (0 .. 39);
+
+                        begin
+
+                           Get_Random_Bytes (Blind_X);
+
+                           for I in N32 range 0 .. 39 loop
+
+                              Blind (I) := Byte (Blind_X (X509.N32 (I)));
+
+                           end loop;
+
+                           P256_Mulgen_Blinded (PK_Jac, Bytes_32 (Scalar_N), Blind);
+
+                        end;
                         P256_To_Affine (PK_Jac);
                         P256_Encode (PK_Enc, PK_Jac);
 
@@ -517,7 +562,16 @@ package body Key_Util is
                            Scalar_N (K) := Byte (R.DER (J + 2 + X509.N32 (K)));
                         end loop;
 
-                        SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, Scalar_N);
+                        declare
+                           Blind_X : X509.Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+                           Blind   : Byte_Seq (0 .. 55);
+                        begin
+                           Get_Random_Bytes (Blind_X);
+                           for I in N32 range 0 .. 55 loop
+                              Blind (I) := Byte (Blind_X (X509.N32 (I)));
+                           end loop;
+                           SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, Scalar_N, Blind);
+                        end;
 
                         for K in X509.N32 range 0 .. 96 loop
                            PK_X (K) := X509.Byte (PK_Enc (N32 (K)));

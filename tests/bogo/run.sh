@@ -188,18 +188,25 @@ UNSUPPORTED_SKIPS=(
   # and on by default; pure MLKEM1024 (draft-ietf-tls-mlkem) and the
   # pre-standard Kyber hybrid are not. The NotEnabledByDefault cases assert
   # BoringSSL's opposite default policy.
-  '*MLKEM1024*' '*Kyber*' 'PostQuantumNotEnabledByDefaultForAServer'
+  '*MLKEM1024*' '*Kyber*' 
   'PostQuantumNotEnabledByDefaultInClients' 'TwoMLKEMs'
   # ClientHelloPadding requires a 512-byte ClientHello (RFC 7685 F5 fix);
   # with the hybrid share on by default ours is ~1.5 KB and needs no padding.
   'ClientHelloPadding'
   # BoringSSL's server-supported-groups hint API (key-share prediction).
-  'KeyShareWithServerHint-*'
+  
+  # NARROWED 2026-09-21: server-supported-groups hint API: the fallback cases pass without it
+  'KeyShareWithServerHint-TLS13'
+  'KeyShareWithServerHint-UnrecognizedGroupIgnored-TLS13'
+ 
   'CurveTest-Server-EqualPreference-TLS13'
   'KeyShareWithServerHint-OverridesExplicitKeyShare-TLS13'
   'KeyShareWithServerHint-OverridesExplicitEmptyKeyShare-TLS13'
   # Pure-RSA key exchange (we offer only ECDHE_RSA)
-  '*RSA_WITH_AES_*' '*RSA_WITH_3DES_*' 'Basic-Server-RSA-*'
+  
+  # NARROWED 2026-09-21: pure RSA key exchange only; the ECDHE_RSA AEAD suites
+  # are supported and now measured.
+  '*-RSA_WITH_AES_*' '*RSA_WITH_3DES_*' 'Basic-Server-RSA-*'
   # External/imported PSK APIs and TLS 1.2 PSK cipher suites are not
   # implemented. SPARKTLS supports ticket-based resumption separately.
   'PSK-*' '*ECDHE_PSK*' '*EmptyPSKHint*' 'EmptyECDHEPSKHint'
@@ -219,18 +226,31 @@ UNSUPPORTED_SKIPS=(
   'ALPS-*' '*ALPS*' '*NPN*' '*ChannelID*'
   '*NextProtocol*'
   'AllExtensions-Client-Permute-*'
-  'UnsolicitedCertificateExtensions-*'
+  
   'ExtraClientEncryptedExtension-*'
   'IgnoreExtensionsOnIntermediates-*'
-  'NoClientCertificateRequested-*'
+  
   'SendDuplicateExtensionsOnCerts-*'
-  'SendExtensionOnClientCertificate-*'
-  'SendNoClientCertificateExtensions-*'
-  'SendNoExtensionsOnIntermediate-*'
+  
+  
+  
   # These ALPN-prefixed cases are specifically ALPN-vs-NPN preference tests.
   'ALPNServer-Preferred-*' 'ALPNServer-Preferred-Swapped-*'
-  '*SignedCertificateTimestamp*' '*SCT*'
-  '*ServerPadding*' '*server-padding*' '*ExportKeyingMaterial*'
+  '*SignedCertificateTimestamp*' 
+  # NARROWED 2026-09-21: SCT lists are not implemented; the unsolicited-SCT refusal passes
+  'CertificateSelection-Server-OCSP-SCT-TLS-TLS12'
+  'CertificateSelection-Server-OCSP-SCT-TLS-TLS13'
+  'SendSCTListOnResume-TLS-TLS12'
+  'SendSCTListOnResume-TLS-TLS13'
+ 
+  '*ServerPadding*' '*server-padding*' 
+  # NARROWED 2026-09-21: exporters ARE implemented (RFC 5705 / 8446 7.5); TLS 1.3 exporter contexts, half-RTT and the renegotiation/False Start variants are the remaining gaps
+  'ExportKeyingMaterial-EmptyContext-TLS-TLS13'
+  'ExportKeyingMaterial-FalseStart'
+  'ExportKeyingMaterial-NoContext-TLS-TLS13'
+  'ExportKeyingMaterial-Renegotiate'
+  'ExportKeyingMaterial-Server-HalfRTT-TLS-TLS13'
+ 
   '*ExportTrafficSecrets*'
   # BoringSSL callback / auxiliary APIs not exposed by SPARKTLS.
   '*TicketCallback*' 'Server-DDoS-*'
@@ -250,11 +270,25 @@ UNSUPPORTED_SKIPS=(
   # and intentionally negotiates TLS 1.2 to avoid pre-11.0.2 TLS 1.3/SNI
   # resumption bugs. SPARKTLS prioritizes spec-correct negotiation; affected
   # clients should update or explicitly disable TLS 1.3.
-  'Server-JDK11-*'
+  
+  # NARROWED 2026-09-21: JDK 11 workaround: the fingerprinted cases where BoringSSL falls back to TLS 1.2 stay out; the rest negotiate as expected and pass
+  'Server-JDK11-0'
+  'Server-JDK11-10'
+  'Server-JDK11-3'
+  'Server-JDK11-4'
+  'Server-JDK11-5'
+  'Server-JDK11-6'
+  'Server-JDK11-7'
+  'Server-JDK11-9'
+  'Server-JDK11-NoWorkaround-9'
+ 
   # These signature-digest agreement probes are for legacy RSA-PKCS1/SHA-1
   # TLS 1.2 CertificateVerify behavior. SPARKTLS intentionally signs and
   # verifies with RSA-PSS, ECDSA P-256/P-384, and Ed25519.
-  'Agree-Digest-*'
+  
+  # NARROWED 2026-09-21: digest agreement: only the SHA-1 case is out
+  'Agree-Digest-SHA1'
+ 
   # BoringSSL-specific ALPN policy knobs that deliberately allow or synthesize
   # protocol states normal SPARKTLS callers should not use.
   'ALPNClient-AllowUnknown-*'
@@ -262,7 +296,13 @@ UNSUPPORTED_SKIPS=(
   # BoringSSL retains only SHA-256 hashes of client certificates as an internal
   # memory optimization. SPARKTLS retains parsed certificate material according
   # to its own bounded state model and does not expose this API.
-  'RetainOnlySHA256-*'
+  
+  # NARROWED 2026-09-21: BoringSSL client-cert hash retention API: the toggle cases stay out
+  'RetainOnlySHA256-OffOn-TLS12'
+  'RetainOnlySHA256-OffOn-TLS13'
+  'RetainOnlySHA256-OnOff-TLS12'
+  'RetainOnlySHA256-OnOff-TLS13'
+ 
   # BoringSSL max-send-fragment API knob. SPARKTLS currently fragments
   # application writes at the protocol maximum and does not expose a
   # caller-configurable cap that also constrains handshake records.
@@ -271,15 +311,15 @@ UNSUPPORTED_SKIPS=(
   # close_notify, shim-initiated shutdown, and split handshake records are
   # covered by other BoGo cases; this exact case depends on BoringSSL shim
   # execution-mode semantics rather than SPARKTLS protocol behavior.
-  'Shutdown-Shim-TLS-Async-SplitHandshakeRecords'
-  'Shutdown-Shim-TLS-Sync-SplitHandshakeRecords'
+  
+  
   # 0-RTT / EarlyData (removed by design — see no_0rtt memory)
   '*EarlyData*'
   # False Start and SSLv2-compatible ClientHello are not supported.
   'FalseStart*' 'NoFalseStart*' 'ExtraHandshake-FalseStart'
   'SendV2ClientHello-*'
   # Renegotiation (TLS 1.2 reneg intentionally rejected)
-  'Renegotiat*' 'Shutdown-Shim-HelloRequest-*' 'SendHalfHelloRequest-*'
+  'Renegotiat*'  
   # KeyUpdate: TLS 1.3 post-handshake rekey IS implemented (RFC 8446 4.6.3).
   # Only the DTLS variants remain out of scope, because DTLS itself is not
   # implemented -- these are excluded for that reason, not because rekeying
@@ -289,7 +329,40 @@ UNSUPPORTED_SKIPS=(
   '*ML-DSA*'
   # SHA-1 / legacy RSA-PKCS1 / MD5-SHA1 sig schemes (deprecated).
   # SPARKTLS signs with RSA-PSS, ECDSA P-256/P-384, and Ed25519.
-  '*RSA_PKCS1_*' '*ECDSA_SHA1*' '*MD5_SHA1*' '*SHA1-Fallback*'
+  
+  # NARROWED 2026-09-21: '*RSA_PKCS1_*' hid 89 passing cases. RSA PKCS#1
+  # v1.5 IS implemented for TLS 1.2 (sign and verify); only SHA-1 and the
+  # rsa_pkcs1_sha256_legacy code point are not, and TLS 1.3 forbids PKCS#1
+  # in CertificateVerify (those cases expect refusal, which we give).
+  'Client-Sign-Negotiate-RSA_PKCS1_SHA1-TLS12'
+  'Client-Sign-Negotiate-RSA_PKCS1_SHA256_LEGACY-TLS13'
+  'Client-Sign-RSA_PKCS1_SHA1-TLS12'
+  'Client-Sign-RSA_PKCS1_SHA256_LEGACY-TLS12'
+  'Client-Sign-RSA_PKCS1_SHA256_LEGACY-TLS13'
+  'Client-SignDefault-RSA_PKCS1_SHA1-TLS12'
+  'Client-SignDefault-RSA_PKCS1_SHA256_LEGACY-TLS12'
+  'Client-Verify-RSA_PKCS1_SHA1-TLS12'
+  'Client-VerifyDefault-RSA_PKCS1_SHA1-TLS12'
+  'Server-Sign-Negotiate-RSA_PKCS1_SHA1-TLS12'
+  'Server-Sign-RSA_PKCS1_SHA1-TLS12'
+  'Server-Sign-RSA_PKCS1_SHA256_LEGACY-TLS12'
+  'Server-SignDefault-RSA_PKCS1_SHA1-TLS12'
+  'Server-SignDefault-RSA_PKCS1_SHA256_LEGACY-TLS12'
+  'Server-Verify-RSA_PKCS1_SHA1-TLS12'
+  'Server-Verify-RSA_PKCS1_SHA256_LEGACY-TLS13'
+  'Server-VerifyDefault-RSA_PKCS1_SHA1-TLS12'
+  
+  # NARROWED 2026-09-21: the TLS 1.3 ECDSA_SHA1 cases expect refusal and
+  # pass; only TLS 1.2 SHA-1 signing/verifying is out of scope.
+  'Client-Sign-ECDSA_SHA1-TLS12'
+  'Client-Sign-Negotiate-ECDSA_SHA1-TLS12'
+  'Client-SignDefault-ECDSA_SHA1-TLS12'
+  'Client-Verify-ECDSA_SHA1-TLS12'
+  'Server-Sign-ECDSA_SHA1-TLS12'
+  'Server-Sign-Negotiate-ECDSA_SHA1-TLS12'
+  'Server-SignDefault-ECDSA_SHA1-TLS12'
+  'Server-Verify-ECDSA_SHA1-TLS12'
+  '*MD5_SHA1*' '*SHA1-Fallback*'
   # Delegated credentials (RFC 9345) are not implemented.
   'DelegatedCredentials-*'
   'Server-SignDefault-ECDSA_SHA1-TLS12'
@@ -303,9 +376,16 @@ UNSUPPORTED_SKIPS=(
   # Server certificate type (RFC 7250 raw public key, not implemented)
   'ServerCertificateType*'
   # TLS certificate compression (RFC 8879) is not implemented.
-  'CertCompression*' '*CertCompression*'
+  'CertCompression*' 
+  # NARROWED 2026-09-21: certificate compression (RFC 8879) is not implemented; the duplicate-extension refusals pass
+  'DuplicateCertCompressionExt2-TLS12'
+  'DuplicateCertCompressionExt2-TLS13'
+ 
   # SSL 3.0 (not supported)
-  'NoSSL3*'
+  
+  # NARROWED 2026-09-21: SSL 3.0 refusal passes; the unsolicited variant does not
+  'NoSSL3-Client-Unsolicited'
+ 
   # Disables every protocol version, including the TLS versions we support.
   'DisableEverything'
 
@@ -358,8 +438,8 @@ UNSUPPORTED_SKIPS=(
   # Despite the ALPN prefix, this TLS 1.2 case disables tickets and expects
   # session-ID resumption through BoringSSL's async session callback.
   'ALPNServer-Async-TLS-TLS12'
-  'CurveID-Resume-Server' 'FragmentAcrossChangeCipherSpec-Client-Resume-Packed'
-  'HelloRetryRequest-NonResumableCipher-TLS13'
+   'FragmentAcrossChangeCipherSpec-Client-Resume-Packed'
+  
   # BoringSSL rewrites its own serialized shim ticket internals for this test.
   # SPARKTLS TLS 1.2 tickets use RFC 5077 stateless TEKs, and TLS 1.3 tickets
   # are bounded ticket-store identifiers, so there is no compatible public API
@@ -384,12 +464,20 @@ UNSUPPORTED_SKIPS=(
 
   # BoringSSL compatibility edge cases for features/policies that are
   # intentionally not supported right now.
-  'FallbackSCSV' 'NoFallbackSCSV'
+  'FallbackSCSV' 
   'SendFallbackSCSV'
   # Arbitrary client key_share lists, including unknown/GREASE groups,
   # are a BoGo shim compatibility surface. SPARKTLS exposes a single
   # initial key_share group plus standard HRR fallback.
-  'CustomKeyShares-*'
+  
+  # NARROWED 2026-09-21: custom key-share lists: only the default cases pass
+  'CustomKeyShares-All-TLS13'
+  'CustomKeyShares-Empty-HRR-TLS13'
+  'CustomKeyShares-Multiple-TLS13'
+  'CustomKeyShares-MultipleNonContiguous-TLS13'
+  'CustomKeyShares-NotMostPreferred-HRR-TLS13'
+  'CustomKeyShares-PeerSelectedLaterKeyShare-TLS13'
+ 
   # Oversized certificate-chain stress profile. SPARKTLS intentionally
   # bounds reassembled handshake messages and retained intermediates.
   'LargeMessage*'
@@ -404,7 +492,10 @@ UNSUPPORTED_SKIPS=(
   #
   # The renegotiation EMS cases ARE skipped below -- not a gap, a
   # protocol decision: we do not implement renegotiation at all.
-  'ExtendedMasterSecret-Renego-*'
+  
+  # NARROWED 2026-09-21: EMS across renegotiation: renegotiation is refused; the NoEMS case stays out
+  'ExtendedMasterSecret-Renego-NoEMS'
+ 
   'Ed25519DefaultDisable-*'
   # {Client,Server}-VerifyDefault-Ed25519-TLS13 assert BoringSSL's OWN default
   # verify-preference table, in which Ed25519 is off unless enabled ("test
@@ -413,11 +504,16 @@ UNSUPPORTED_SKIPS=(
   # conformance property.
   '*-VerifyDefault-Ed25519-TLS13'
   'PostQuantumNotEnabledByDefaultInClients'
-  'SendClientVersion-RSA' 'SkipChangeCipherSpec-*'
+  'SendClientVersion-RSA' 
   'NoCommonSignatureAlgorithms-TLS12-Fallback' 'NoCommonCurves'
   # RSA key-encipherment suites are pure-RSA key exchange, which is
   # intentionally unsupported.
-  'RSAKeyUsage-Client-WantEncipherment-*'
+  
+  # NARROWED 2026-09-21: RSA key-usage enforcement: only the RSA-key-exchange (encipherment) cases stay out
+  'RSAKeyUsage-Client-WantEncipherment-GotEnciphermentTLS1'
+  'RSAKeyUsage-Client-WantEncipherment-GotEnciphermentTLS11'
+  'RSAKeyUsage-Client-WantEncipherment-GotEnciphermentTLS12'
+ 
   # These negotiation cases expect CBC or static-RSA cipher suites from
   # BoGo's legacy preference string. The modern ECDHE AEAD cases run.
   'CipherNegotiation-1' 'CipherNegotiation-2' 'CipherNegotiation-3'
@@ -450,8 +546,20 @@ UNSUPPORTED_SKIPS=(
   # Certificate selection probes whose configurations only offer CBC or
   # static-RSA cipher suites (never negotiated here), or that negotiate the
   # RFC 7250 certificate_type extension (not implemented).
-  'CertificateSelection-Server-CipherSuite-*'
-  'CertificateSelection-Server-SignatureAlgorithm-Match*-TLS-TLS12'
+  
+  # NARROWED 2026-09-21: cipher-suite-driven credential selection on the
+  # TLS 1.2 server; the MatchNone refusals pass, the selections do not.
+  'CertificateSelection-Server-CipherSuite-*-MatchDefault-*'
+  'CertificateSelection-Server-CipherSuite-*-MatchFirst-*'
+  'CertificateSelection-Server-CipherSuite-*-MatchSecond-*'
+  'CertificateSelection-Server-CipherSuite-NoECDHE-MatchNone-TLS-TLS12'
+ 
+  
+  # NARROWED 2026-09-21: TLS 1.2 server signature-algorithm selection across credentials: MatchNone passes
+  'CertificateSelection-Server-SignatureAlgorithm-MatchDefault-TLS-TLS12'
+  'CertificateSelection-Server-SignatureAlgorithm-MatchFirst-TLS-TLS12'
+  'CertificateSelection-Server-SignatureAlgorithm-MatchSecond-TLS-TLS12'
+ 
   'CertificateSelection-Server-SignatureAlgorithmECDSACurve-TLS-TLS12'
   'CertificateSelection-Server-SignatureAlgorithmImpactsECDHEOnly-*'
   'CertificateSelection-*-CertificateType-*'

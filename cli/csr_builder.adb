@@ -167,8 +167,16 @@ package body CSR_Builder is
                SPARKTLSCrypto.RFC6979.Derive_K_P256
                  (Bytes_32 (D), Bytes_32 (H), K, OK);
                if OK then
-                  SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K), Byte_Seq'(0 .. 39 => 16#7E#),
-                                             R_Out, S_Out, OK);
+                  declare
+                     Blind_X : X509.Byte_Seq (0 .. 39);   --  scalar/coordinate blinding
+                     Blind   : Byte_Seq (0 .. 39);
+                  begin
+                     Get_Random (Blind_X);
+                     for I in N32 range 0 .. 39 loop
+                        Blind (I) := Byte (Blind_X (X509.N32 (I)));
+                     end loop;
+                     SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K), Blind, R_Out, S_Out, OK);
+                  end;
                end if;
                if OK then
                   ECDSA_To_DER (Byte_Seq (R_Out), Byte_Seq (S_Out), 32,
@@ -197,8 +205,16 @@ package body CSR_Builder is
                if not OK then
                   return;
                end if;
-SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
-                                          R_Out, S_Out, OK);
+               declare
+                  Blind_X : X509.Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+                  Blind   : Byte_Seq (0 .. 55);
+               begin
+                  Get_Random (Blind_X);
+                  for I in N32 range 0 .. 55 loop
+                     Blind (I) := Byte (Blind_X (X509.N32 (I)));
+                  end loop;
+                  SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K), Blind, R_Out, S_Out, OK);
+               end;
                if OK then
                   ECDSA_To_DER (R_Out, S_Out, 48, Sig_DER, Sig_Len);
                end if;

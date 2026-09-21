@@ -18,17 +18,48 @@ There is ONE profile. A laxer "temporary triage" mode used to exist and hid
 ~290 passing tests behind stale globs; a stale skip and a real gap look
 identical from the outside, so it was removed (2026-08-17).
 
-## Current Result (2026-09-14)
+## Current Result (2026-09-21)
 
 ```
 ./tests/bogo/run.sh
-1464/1534 passed, 70 failed, 0 unimplemented, 0 skipped
-    Out of scope: 151 skip globs applied (not included in total)
+1675/1745 passed, 70 failed, 0 unimplemented, 0 skipped
+    Out of scope: 194 skip entries applied (not included in total)
     Failures match EXPECTED_FAILURES.txt exactly (70 known).
 ```
 
 History: 1021/1598 (2026-08-22) -> 1073/1735 (2026-09-13, after the
-security burndown) -> 1393/1576 -> 1462/1536 -> 1464/1534 (2026-09-14, this sweep).
+security burndown) -> 1393/1576 -> 1462/1536 -> 1464/1534 (2026-09-14) ->
+1477/1547 (2026-09-20) -> 1675/1745 (2026-09-21, skip-list audit).
+
+### What the 2026-09-21 audit did
+
+A full run with every skip glob removed (7908 cases: 1974 pass, 1218 fail,
+4716 unimplemented) showed 497 currently skipped cases passing. They were
+judged family by family: a case that passes because we refuse the
+feature it targets (TLS 1.0/1.1, CBC, P-521, pure RSA key exchange) is a
+pass for the wrong reason and stays skipped; a case whose pass means what
+the test says was unskipped. Globs were narrowed to literal names of the
+cases that still fail (each with a reason in `run.sh`):
+
+- `*RSA_PKCS1_*` hid 89 passing cases: RSA PKCS#1 v1.5 IS implemented for
+  TLS 1.2, only SHA-1 and the `_LEGACY` code point are out.
+- `*RSA_WITH_AES_*` also matched the ECDHE_RSA AEAD suites we support.
+- Whole families that pass and were dropped from the skip list:
+  HelloRequest/renegotiation refusal, SkipChangeCipherSpec, unsolicited
+  certificate extensions, NoClientCertificateRequested, several singles.
+- Partial families narrowed with literals: ECDSA_SHA1 (TLS 1.3 refusals
+  pass), Server-JDK11, ExportKeyingMaterial (exporters are implemented),
+  KeyShareWithServerHint, CustomKeyShares, Agree-Digest, NoSSL3,
+  RetainOnlySHA256, EMS-Renego, RSAKeyUsage, CertificateSelection cipher
+  suite and signature-algorithm families, CertCompression and SCT
+  refusals.
+
+The 4716 unimplemented cases are features, not shim gaps: DTLS 2060,
+TLS 1.0/1.1 732, QUIC 652, BoringSSL compliance profiles 348,
+ALPS/NPN/ChannelID 265, external PSK 177, 0-RTT 172, ECH 106, the rest
+BoringSSL-specific APIs.
+
+## Sweep of 2026-09-14
 
 ### What this sweep did
 

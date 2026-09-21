@@ -52,7 +52,7 @@ is
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
-      Random          : in Random_Bytes_Fn;
+      Random          : in Live_Random_Fn;
       Sign            : in Sign_Fn;
       Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
@@ -65,7 +65,7 @@ is
        and then Transcript_Hash'Last in 31 | 47
        and then (if Sig_Algo_Wire in
                       Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
-                 then Random /= null and then Id.RSA_Mod_Len in 64 .. 512),
+                 then Id.RSA_Mod_Len in 64 .. 512),
      Post => Len <= N32 (Result'Length);
 
    --  RFC 8446 4.4.2 TLS 1.3 Certificate parser. Replaces the

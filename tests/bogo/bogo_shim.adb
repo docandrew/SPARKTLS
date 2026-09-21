@@ -1239,7 +1239,8 @@ procedure Bogo_Shim is
             OK : Boolean;
          begin
             SPARKTLS.Credentials.Load_Identity
-              (Creds (I).Id, Trim_Path (Creds (I).Cert_File), Trim_Path (Creds (I).Key_File), OK);
+              (Creds (I).Id, Trim_Path (Creds (I).Cert_File), Trim_Path (Creds (I).Key_File),
+               Entropy_Random.Random'Access, OK);
             if not OK then
                Err ("bogo_shim: load credential" & Integer'Image (I) & " failed");
                return False;
@@ -1634,7 +1635,7 @@ procedure Bogo_Shim is
             Trust : constant String := Trim_Path (Cfg.Trust_Cert);
          begin
             if Cert /= "" and then Key /= "" then
-               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
             else
                --  Only credential blocks: no default identity.
                Id := SPARKTLS.No_Identity;
@@ -1793,7 +1794,7 @@ procedure Bogo_Shim is
             end if;
             if Cert /= "" and Key /= "" then
                --  mTLS: client cert + key for CertificateRequest reply.
-               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
                if not Id_OK then
                   Err ("bogo_shim: load client identity failed");
                   Ada.Command_Line.Set_Exit_Status
