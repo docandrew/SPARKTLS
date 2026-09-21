@@ -3,7 +3,9 @@ with Interfaces.C.Strings;
 with GNAT.OS_Lib;
 with Ada.Directories;
 with Ada.Text_IO;
+with SPARKNaCl;
 with SPARKTLSCrypto.Base64;
+use type SPARKNaCl.N32;
 
 package body PEM_Util is
    use type X509.N32;
@@ -12,17 +14,21 @@ package body PEM_Util is
      (DER   : X509.Byte_Seq;
       Label : String) return String
    is
-      --  Convert DER bytes to a String for Base64.Encode
-      Plain : String (1 .. Natural (DER'Length));
+      --  X509.Byte_Seq and SPARKNaCl.Byte_Seq are distinct types; copy
+      --  into the crypto library's type, then encode into a buffer sized
+      --  by the library. (The CLI has a full runtime; the library's Base64
+      --  entry points are buffer-based so that the library does not.)
+      Plain   : SPARKNaCl.Byte_Seq (0 .. SPARKNaCl.N32 (DER'Length) - 1);
+      B64_Buf : String (1 .. SPARKTLSCrypto.Base64.Encoded_Length (Natural (DER'Length)));
+      B64_Len : Natural;
    begin
       for I in DER'Range loop
-         Plain (Natural (I - DER'First) + 1) := Character'Val (DER (I));
+         Plain (SPARKNaCl.N32 (I - DER'First)) := SPARKNaCl.Byte (DER (I));
       end loop;
+      SPARKTLSCrypto.Base64.Encode (Plain, B64_Buf, B64_Len);
 
       declare
-         B64 : constant String :=
-            SPARKTLSCrypto.Base64.To_String
-              (SPARKTLSCrypto.Base64.Encode (Plain));
+         B64 : constant String := B64_Buf (1 .. B64_Len);
          Header : constant String :=
             "-----BEGIN " & Label & "-----" & ASCII.LF;
          Footer : constant String :=

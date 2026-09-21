@@ -913,6 +913,7 @@ is
          if not Retry_Mode then
             Gen_Random (Byte_Seq (Tmp_X25519));
             KE.Local_SK := Tmp_X25519;
+            Sanitize (Tmp_X25519);
          end if;
          declare
             Basepoint : constant Bytes_32 := (9, others => 0);
@@ -929,12 +930,14 @@ is
          if not Retry_Mode then
             Gen_Random (Byte_Seq (Tmp_P256));
             KE.P256_SK := Tmp_P256;
+            Sanitize (Tmp_P256);
          end if;
          declare
             Blind : Byte_Seq (0 .. 39);   --  SR-62
          begin
             Gen_Random (Blind);
             SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (P256_Pt, KE.P256_SK, Blind);
+            Sanitize (Blind);
          end;
          SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
          SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
@@ -947,6 +950,7 @@ is
          if not Retry_Mode then
             Gen_Random (Byte_Seq (Tmp_P384));
             KE.P384_SK := Tmp_P384;
+            Sanitize (Tmp_P384);
          end if;
          SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, KE.P384_SK);
       end;

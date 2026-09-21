@@ -126,6 +126,7 @@ is
          return;
       end if;
       HC.KE.Local_SK := Tmp_SK;
+      Sanitize (Tmp_SK);
       SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
       SPARKTLSCrypto.X25519.Scalar_Mult (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
 
@@ -197,10 +198,12 @@ is
          return;
       end if;
       HC.KE.P256_SK := Tmp_SK;
+      Sanitize (Tmp_SK);
       Gen_Random (Blind_G);
       Gen_Random (Blind_P);
       --  Our public key
       P256_Mulgen_Blinded (PK_Jac, HC.KE.P256_SK, Blind_G);
+      Sanitize (Blind_G);
       P256_To_Affine (PK_Jac);
       P256_Encode (PK_Enc, PK_Jac);
       --  Shared secret: x-coord of [our_sk] * peer_pk
@@ -211,6 +214,7 @@ is
 
       end if;
       P256_Mul_Blinded (Peer_Pt, HC.KE.P256_SK, Blind_P);
+      Sanitize (Blind_P);
       P256_To_Affine (Peer_Pt);
       declare
          Enc : Byte_Seq (0 .. 64);
@@ -227,6 +231,7 @@ is
          end if;
          HC.KE.Shared := (others => 0);
          HC.KE.Shared (0 .. 31) := Enc (1 .. 32);
+         Sanitize (Enc);   --  the shared secret's x-coordinate
       end;
       --  group(2) + key_len(2) + key(65) = 69
       KS_Raw (0) := 0;
@@ -273,15 +278,18 @@ is
          return;
       end if;
       HC.KE.P384_SK := Tmp_SK;
+      Sanitize (Tmp_SK);
       SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
       SPARKTLSCrypto.P384.Point.P384_ECDHE
         (Secret => SS, OK => SS_OK, SK => HC.KE.P384_SK, Peer_PK => HC.KE.P384_PK);
       if not SS_OK then
+         Sanitize (SS);
          HC.Ext_Parse_Err := Illegal_Parameter;
          return;
       end if;
       HC.KE.Shared := (others => 0);
       HC.KE.Shared (0 .. 47) := SS;
+      Sanitize (SS);
       --  group(2) + key_len(2) + key(97) = 101
       KS_Raw (0) := 0;
       KS_Raw (1) := 16#18#;
@@ -1336,6 +1344,7 @@ is
             begin
                SK := Id.Ed25519_Key;
                SPARKTLSCrypto.Ed25519.Sign (SM, Content (0 .. Content_Len - 1), SK);
+               Sanitize (Byte_Seq (SK));
                Sig (0 .. 63) := SM (0 .. 63);
                Sig_OK := True;
             end;
@@ -1353,29 +1362,35 @@ is
                --  fixed, constant-time candidate budget is exhausted.
                SPARKTLSCrypto.RFC6979.Derive_K_P256
                  (D => Bytes_32 (Id.ECDSA_P256_Key), H => Bytes_32 (H), K => K_Bytes, OK => K_OK);
-               if not K_OK then
-                  Sig_OK := False;
-                  return;
-               end if;
-               --  Blinding is defence in depth; if no live CSPRNG is
-               --  configured, a zero blind means no blinding (the scalar
-               --  and coordinates are used as-is) and signing still works.
-               if Random /= null then
-                  Random.all (Blind);
+               if K_OK then
+                  --  Blinding is defence in depth; if no live CSPRNG is
+                  --  configured, a zero blind means no blinding (the scalar
+                  --  and coordinates are used as-is) and signing still works.
+                  if Random /= null then
+                     Random.all (Blind);
+                  else
+                     Blind := (others => 0);
+                  end if;
+                  SPARKTLSCrypto.P256.ECDSA.Sign
+                    (Hash  => H,
+                     D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
+                     K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+                     Blind => Blind,
+                     R_Out => R_Half,
+                     S_Out => S_Half,
+                     OK    => Sig_OK);
+                  if Sig_OK then
+                     ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
+                  end if;
                else
-                  Blind := (others => 0);
+                  Sig_OK := False;
                end if;
-               SPARKTLSCrypto.P256.ECDSA.Sign
-                 (Hash  => H,
-                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
-                  K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
-                  Blind => Blind,
-                  R_Out => R_Half,
-                  S_Out => S_Half,
-                  OK    => Sig_OK);
-               if Sig_OK then
-                  ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
-               end if;
+               --  A leaked nonce is the private key; scrub it, the blind
+               --  and the signature halves on every path.
+               Sanitize (Byte_Seq (K_Bytes));
+               Sanitize (Blind);
+               Sanitize (Byte_Seq (R_Half));
+               Sanitize (Byte_Seq (S_Half));
             end;
 
          when Sig_ECDSA_P384_SHA384 =>
@@ -1390,20 +1405,23 @@ is
                --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
                SPARKTLSCrypto.RFC6979.Derive_K_P384
                  (D => Bytes_48 (Id.ECDSA_P384_Key), H => Bytes_48 (H), K => K_Bytes, OK => K_OK);
-               if not K_OK then
+               if K_OK then
+                  SPARKTLSCrypto.P384.ECDSA.Sign
+                    (Hash  => H,
+                     D     => Byte_Seq (Id.ECDSA_P384_Key),
+                     K     => Byte_Seq (K_Bytes),
+                     R_Out => R_Half,
+                     S_Out => S_Half,
+                     OK    => Sig_OK);
+                  if Sig_OK then
+                     ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
+                  end if;
+               else
                   Sig_OK := False;
-                  return;
                end if;
-               SPARKTLSCrypto.P384.ECDSA.Sign
-                 (Hash  => H,
-                  D     => Byte_Seq (Id.ECDSA_P384_Key),
-                  K     => Byte_Seq (K_Bytes),
-                  R_Out => R_Half,
-                  S_Out => S_Half,
-                  OK    => Sig_OK);
-               if Sig_OK then
-                  ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
-               end if;
+               Sanitize (Byte_Seq (K_Bytes));
+               Sanitize (R_Half);
+               Sanitize (S_Half);
             end;
 
          when Sig_RSA_PSS_SHA256 =>
@@ -1429,6 +1447,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
+               Sanitize (Byte_Seq (Blind));
             end;
 
          when Sig_RSA_PSS_SHA384 =>
@@ -1454,6 +1473,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
+               Sanitize (Byte_Seq (Blind));
             end;
 
          when Sig_RSA_PSS_SHA512 =>
@@ -1479,6 +1499,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
+               Sanitize (Byte_Seq (Blind));
             end;
 
          when others =>

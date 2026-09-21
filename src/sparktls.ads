@@ -1016,6 +1016,14 @@ is
    --
    --  The caller must supply a CSPRNG. This is the only callback;
    --  everything else is buffer-based.
+   --
+   --  Call pattern: a full handshake draws about twenty times (ephemeral
+   --  key, randoms, scalar blinds, salts, ticket material), mostly 32 to
+   --  40 bytes each. A callback that performs a syscall per draw pays for
+   --  it: getrandom derives a fresh key on every call regardless of size,
+   --  and the example server spent ~16% of its CPU there before pooling.
+   --  Serve draws from a pool refilled in one read (see
+   --  examples/entropy_random.adb), or from a userspace DRBG.
    ----------------------------------------------------------------------------
 
    type Random_Bytes_Fn is access procedure (Output : out Byte_Seq);
