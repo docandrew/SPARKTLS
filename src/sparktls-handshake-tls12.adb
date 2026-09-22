@@ -350,16 +350,25 @@ is
    --  deterministic nonce (HMAC-SHA-384 DRBG), DER-encoded (r,s).
    procedure Sign_SKE_ECDSA_P384
      (Id      : in Identity;
+      Random  : in Live_Random_Fn;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
       OK      : out Boolean)
+   with
+     Pre  =>
+       Sig'First = 0
+       and then Sig'Last >= Max_Sig - 1
+       and then Sig'Last < N32'Last
+       and then Msg'Last < N32'Last - 128,
+     Post => (if OK then Sig_Len <= Max_Sig)
    is
       H       : constant SPARKNaCl.Hashing.SHA384.Digest := SPARKNaCl.Hashing.SHA384.Hash (Msg);
       K_Bytes : Bytes_48;
       K_OK    : Boolean;
       R_Half  : Byte_Seq (0 .. 47);
       S_Half  : Byte_Seq (0 .. 47);
+      Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
    begin
       Sig := (others => 0);
       Sig_Len := 0;
@@ -371,10 +380,12 @@ is
          K  => K_Bytes,
          OK => K_OK);
       if K_OK then
+         Random.all (Blind);
          SPARKTLSCrypto.P384.ECDSA.Sign
            (Hash  => H,
             D     => Byte_Seq (Id.ECDSA_P384_Key),
             K     => Byte_Seq (K_Bytes),
+            Blind => Blind,
             R_Out => R_Half,
             S_Out => S_Half,
             OK    => OK);
@@ -383,6 +394,7 @@ is
          end if;
       end if;
       Sanitize (Byte_Seq (K_Bytes));
+      Sanitize (Blind);
       Sanitize (R_Half);
       Sanitize (S_Half);
    end Sign_SKE_ECDSA_P384;
@@ -392,8 +404,9 @@ is
    --  server's ephemeral public key for the negotiated group.
    --  Params_Len = 0 means the group is unsupported.
    --  No contract: gnatprove inlines this at its single call site, where
-   --  Blind is a Byte_Seq (0 .. 39), so the blinded Mulgen precondition
-   --  and the Params length facts hold without an explicit contract.
+   --  Blind is a Byte_Seq (0 .. 55) (the P-256 blind is its first 40
+   --  bytes), so the blinded Mulgen preconditions and the Params length
+   --  facts hold without an explicit contract.
    procedure Fill_SKE_Params
      (KE : in KE_State; Blind : in Byte_Seq; Params : out Byte_Seq; Params_Len : out N32)
    is
@@ -429,7 +442,7 @@ is
                PK_Jac : SPARKTLSCrypto.P256.Point.P256_Jacobian;
                PK_Enc : Byte_Seq (0 .. 64);
             begin
-               SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (PK_Jac, KE.P256_SK, Blind);
+               SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (PK_Jac, KE.P256_SK, Blind (0 .. 39));
                SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
                SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Params (4 .. 4 + 64) := PK_Enc;
@@ -439,7 +452,7 @@ is
             declare
                PK_Enc : Byte_Seq (0 .. 96);
             begin
-               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, KE.P384_SK);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, KE.P384_SK, Blind);
                Params (4 .. 4 + 96) := PK_Enc;
             end;
          when Group_X25519MLKEM768 =>
@@ -502,10 +515,11 @@ is
       Len := 0;
 
       declare
-         Blind : Byte_Seq (0 .. 39);   --  SR-62
+         Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
       begin
          Random.all (Blind);
          Fill_SKE_Params (HC.KE, Blind, Params, Params_Len);
+         Sanitize (Blind);
       end;
       if Params_Len = 0 then
          return;
@@ -585,7 +599,7 @@ is
             when Sig_ECDSA_P384_SHA384 =>
                --  ecdsa_secp384r1_sha384
                Sign_SKE_ECDSA_P384
-                 (Id, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
+                 (Id, Random, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
             when others =>
                return;
@@ -709,8 +723,11 @@ is
          when Group_Secp384r1 =>
             declare
                PK_Enc : Byte_Seq (0 .. 96);
+               Blind  : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
             begin
-               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
+               HC.Cfg.Random.all (Blind);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, HC.KE.P384_SK, Blind);
+               Sanitize (Blind);
                Result (5 .. 5 + 96) := PK_Enc;
             end;
          when Group_X25519MLKEM768 =>
@@ -1290,15 +1307,23 @@ is
    --  (HMAC-SHA-384 DRBG), DER-encoded (r,s).
    procedure Sign_Hash_ECDSA_P384
      (Id      : in Identity;
+      Random  : in Live_Random_Fn;
       H       : in Bytes_48;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
       OK      : out Boolean)
+   with
+     Pre  =>
+       Sig'First = 0
+       and then Sig'Last >= Max_Sig - 1
+       and then Sig'Last < N32'Last,
+     Post => (if OK then Sig_Len <= Max_Sig)
    is
       K_Bytes : Bytes_48;
       K_OK    : Boolean;
       R_Half  : Byte_Seq (0 .. 47);
       S_Half  : Byte_Seq (0 .. 47);
+      Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
    begin
       Sig := (others => 0);
       Sig_Len := 0;
@@ -1307,10 +1332,12 @@ is
       SPARKTLSCrypto.RFC6979.Derive_K_P384
         (D => Bytes_48 (Id.ECDSA_P384_Key), H => H, K => K_Bytes, OK => K_OK);
       if K_OK then
+         Random.all (Blind);
          SPARKTLSCrypto.P384.ECDSA.Sign
            (Hash  => SPARKNaCl.Hashing.SHA384.Digest (H),
             D     => Byte_Seq (Id.ECDSA_P384_Key),
             K     => Byte_Seq (K_Bytes),
+            Blind => Blind,
             R_Out => R_Half,
             S_Out => S_Half,
             OK    => OK);
@@ -1319,6 +1346,7 @@ is
          end if;
       end if;
       Sanitize (Byte_Seq (K_Bytes));
+      Sanitize (Blind);
       Sanitize (R_Half);
       Sanitize (S_Half);
    end Sign_Hash_ECDSA_P384;
@@ -1398,7 +1426,7 @@ is
                return;
             end if;
             Sign_Hash_ECDSA_P384
-              (Id, Bytes_48 (Transcript_Hash (Transcript_Hash'First .. Transcript_Hash'First + 47)),
+              (Id, Random, Bytes_48 (Transcript_Hash (Transcript_Hash'First .. Transcript_Hash'First + 47)),
                Sig, Sig_Len, Sig_OK);
 
          when Sig_Ed25519 =>

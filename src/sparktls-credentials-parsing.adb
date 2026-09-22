@@ -399,6 +399,7 @@ is
      (Id          : out Identity;
       Cert_PEM    : String;
       Key_PEM     : String;
+      Random      : Random_Bytes_Fn;
       OK          : out Boolean;
       Public_Only : Boolean := False)
    is
@@ -460,7 +461,8 @@ is
            (Id, Cert_Result.DER (0 .. Cert_Result.DER_Len - 1), Set_OK);
       else
          Cert_Verify.Set_Identity
-           (Id, Cert_Result.DER (0 .. Cert_Result.DER_Len - 1), Key_Buf (0 .. Key_Len - 1), Set_OK);
+           (Id, Cert_Result.DER (0 .. Cert_Result.DER_Len - 1), Key_Buf (0 .. Key_Len - 1),
+            Random, Set_OK);
       end if;
       if not Set_OK then
          return;

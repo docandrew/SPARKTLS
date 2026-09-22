@@ -349,10 +349,14 @@ is
    --    Algo_EC_Ed25519 â Ed25519 (Key: 64 bytes, secret || public)
    --    Algo_EC_P256    â ECDSA P-256 (Key: 32 bytes, scalar)
    --    Algo_EC_P384    â ECDSA P-384 (Key: 48 bytes, scalar)
+   --  Random feeds the blinds of the [d]G consistency check (the private
+   --  scalar is multiplied once here, at load time; that multiply is
+   --  blinded like every other use of the key).
    procedure Set_Identity
      (Id       : out Identity;
       Cert_DER : X509.Byte_Seq;
       Key      : Byte_Seq;
+      Random   : Live_Random_Fn;
       OK       : out Boolean)
    with
      Pre =>

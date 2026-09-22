@@ -1,5 +1,6 @@
 with Interfaces; use Interfaces;
 with SPARKTLS.Credentials;
+with Entropy_Random;
 with SPARKTLS.External_Signing;
 with SPARKTLSCrypto.RSA;
 with SPARKTLSCrypto.P256.ECDSA;
@@ -15,7 +16,7 @@ package body Software_Signer is
 
    procedure Init (Cert_Path, Key_Path : String; OK : out Boolean) is
    begin
-      Credentials.Load_Identity (Key_Id, Cert_Path, Key_Path, OK);
+      Credentials.Load_Identity (Key_Id, Cert_Path, Key_Path, Entropy_Random.Random'Access, OK);
       Loaded := OK;
    end Init;
 
@@ -103,6 +104,7 @@ package body Software_Signer is
                DER   : Byte_Seq (0 .. External_Signing.Max_ECDSA_DER_Len - 1);
                D_Len : N32;
                K_OK, S_OK, D_OK : Boolean;
+               Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
             begin
                if Digest'Length /= 48 or else Sig'Length < External_Signing.Max_ECDSA_DER_Len then
                   return;
@@ -112,9 +114,10 @@ package body Software_Signer is
                if not K_OK then
                   return;
                end if;
+               Entropy_Random.Random (Blind);
                SPARKTLSCrypto.P384.ECDSA.Sign
                  (Hash => H, D => Byte_Seq (Key_Id.ECDSA_P384_Key), K => Byte_Seq (K),
-                  R_Out => R, S_Out => S, OK => S_OK);
+                  Blind => Blind, R_Out => R, S_Out => S, OK => S_OK);
                if not S_OK then
                   return;
                end if;

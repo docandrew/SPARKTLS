@@ -37,6 +37,17 @@ procedure Test_OCSP_Staple is
       end if;
    end Check;
 
+   --  Deterministic filler for the identity-load blinds: this test is
+   --  about parsing and signing, not about the blind's randomness.
+   procedure Test_Random (Output : out Byte_Seq) is
+      V : Byte := 16#5B#;
+   begin
+      for I in Output'Range loop
+         V := V * 13 + 7;
+         Output (I) := V;
+      end loop;
+   end Test_Random;
+
    Id    : aliased Identity;
    Id_OK : Boolean;
 
@@ -118,7 +129,8 @@ begin
    end if;
 
    SPARKTLS.Credentials.Load_Identity
-     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), Id_OK);
+     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
+      Test_Random'Unrestricted_Access, Id_OK);
    Check ("identity loads", Id_OK);
    if not Id_OK then
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);

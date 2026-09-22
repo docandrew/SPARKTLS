@@ -10,6 +10,7 @@ with SPARKNaCl;     use SPARKNaCl;
 with SPARKTLS;      use SPARKTLS;
 with SPARKTLS.Credentials;
 with SPARKTLSCrypto.RSA;
+with SPARKTLSCrypto.BigNat64;
 
 procedure Test_RSA_CRT is
    Blind16_Test : constant Bytes_16 := (others => 16#42#);   --  fixed blinding for tests
@@ -29,6 +30,17 @@ procedure Test_RSA_CRT is
       end if;
    end Check;
 
+   --  Deterministic filler for the identity-load blinds: this test is
+   --  about parsing and signing, not about the blind's randomness.
+   procedure Test_Random (Output : out Byte_Seq) is
+      V : Byte := 16#5B#;
+   begin
+      for I in Output'Range loop
+         V := V * 13 + 7;
+         Output (I) := V;
+      end loop;
+   end Test_Random;
+
    Id : SPARKTLS.Identity;
    OK : Boolean;
 begin
@@ -38,7 +50,8 @@ begin
       return;
    end if;
    SPARKTLS.Credentials.Load_Identity
-     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), OK);
+     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
+      Test_Random'Unrestricted_Access, OK);
    Check ("identity loads", OK and then Id.Sign_Algo = Sign_RSA_PSS);
    if not OK then
       Put_Line ("Total:" & Total'Image & " Pass:" & Pass'Image & " Fail:" & Fail'Image);
@@ -136,6 +149,31 @@ begin
                (Hash => Hash, Modulus => Id.RSA_Modulus,
                 Mod_Len => Id.RSA_Mod_Len, Exponent => Id.RSA_Pub_Exp,
                 Signature => CRT, Sig_Len => LC));
+
+      --  The CRT path on its own. Sign_PSS tries the blinded CRT first and
+      --  falls back to the plain exponent on a mismatch, so a broken CRT
+      --  path would still have produced a correct signature above; only a
+      --  direct call proves that the blinded CRT path is the one that ran.
+      --  X is the signature itself (a value below n): CRT(X) then the
+      --  public operation must give X back.
+      declare
+         X : Byte_Seq (0 .. N32 (Id.RSA_Mod_Len) - 1) := CRT;
+         Y : Byte_Seq (0 .. N32 (Id.RSA_Mod_Len) - 1);
+         C_OK, P_OK, P_Str : Boolean;
+         P_Red : SPARKTLSCrypto.BigNat64.Word;
+      begin
+         SPARKTLSCrypto.RSA.RSA_Private_CRT
+           (X => X, X_Len => Natural (Id.RSA_Mod_Len), Modulus => Id.RSA_Modulus,
+            Mod_Len => Natural (Id.RSA_Mod_Len), CRT => Id.RSA_CRT, Blind => Blind16_Test, OK => C_OK);
+         Check ("blinded CRT primitive accepts the key", C_OK);
+         Y := X;
+         SPARKTLSCrypto.RSA.RSA_Public
+           (X => Y, X_Len => Natural (Id.RSA_Mod_Len), Modulus => Id.RSA_Modulus,
+            Mod_Len => Natural (Id.RSA_Mod_Len), Exp => Id.RSA_Pub_Exp,
+            OK => P_OK, Structural_OK => P_Str, Reduced_Mask => P_Red);
+         Check ("blinded CRT primitive inverts under the public key",
+                (C_OK and P_OK) and then Y = CRT);
+      end;
 
       --  PKCS#1 v1.5 too (deterministic by construction)
       SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5

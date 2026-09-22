@@ -39,12 +39,16 @@ is
    --  Public_Only: ignore Key_PEM (may be empty) and load the certificate
    --  chain alone through Cert_Verify.Set_Identity_Public, for an identity
    --  whose signatures come from Config.Sign.
+   --  Random: CSPRNG for the blinded key/certificate consistency check;
+   --  required unless Public_Only (no private key, nothing to check).
    procedure Load_Identity_PEM
      (Id          : out Identity;
       Cert_PEM    : String;
       Key_PEM     : String;
+      Random      : Random_Bytes_Fn;
       OK          : out Boolean;
       Public_Only : Boolean := False)
-   with Pre => Cert_PEM'Last <= PEM.Max_PEM_Input and Key_PEM'Last <= PEM.Max_PEM_Input;
+   with Pre => (Cert_PEM'Last <= PEM.Max_PEM_Input and Key_PEM'Last <= PEM.Max_PEM_Input)
+               and then (Public_Only or else Random /= null);
 
 end SPARKTLS.Credentials.Parsing;

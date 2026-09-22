@@ -326,7 +326,7 @@ begin
                Id_OK := Id_OK and S_OK;
             end;
          else
-            SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+            SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
          end if;
          if not Id_OK then
             Err ("load identity failed: " & Cert);

@@ -25,6 +25,7 @@ procedure Bench_P384 is
    Qx, Qy, R, S : Byte_Seq (0 .. 47) := (others => 0);
    PK   : Byte_Seq (0 .. 96) := (others => 0);
    Secret : Bytes_48;
+   Blind : constant Byte_Seq (0 .. 55) := (others => 16#7E#);
    OK   : Boolean := True;
    Good : Boolean := True;
    T0, T1 : Time;
@@ -38,7 +39,7 @@ begin
 
    T0 := Clock;
    for I in 1 .. It loop
-      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K, R, S, OK);
+      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K, Blind, R, S, OK);
       Good := Good and OK;
    end loop;
    T1 := Clock;

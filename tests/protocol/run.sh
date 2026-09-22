@@ -115,6 +115,46 @@ bash "$CERT_DIR/generate.sh"
 CERT="$CERT_DIR/rsa.crt"
 KEY="$CERT_DIR/rsa.key"
 
+#  Client-authentication material for the certificate scripts: a CA and
+#  one leaf per key type, so the server can be started with
+#  --mtls-require <ca> and each script gets a leaf its algorithm expects.
+#  The old arrangement passed the server's own self-signed certificate as
+#  both CA and client leaf, which our validator refuses (CA-as-leaf, same
+#  policy as x509-limbo rfc5280--ca-as-leaf), so every one of those scripts
+#  was scored "unsupported" for a harness reason.
+CLIENT_DIR="$DIR/logs/client-certs"
+make_client_certs() {
+    [ -f "$CLIENT_DIR/ca.crt" ] && return 0
+    mkdir -p "$CLIENT_DIR"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$CLIENT_DIR/ca.key" 2>/dev/null
+    openssl req -x509 -new -key "$CLIENT_DIR/ca.key" -out "$CLIENT_DIR/ca.crt" -days 30 \
+        -subj "/CN=sparktls-tlsfuzzer-client-ca" \
+        -addext "basicConstraints=critical,CA:TRUE" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" \
+        -addext "subjectKeyIdentifier=hash" 2>/dev/null
+    cat > "$CLIENT_DIR/leaf.ext" <<EOF
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+subjectAltName=DNS:sparktls-tlsfuzzer-client
+authorityKeyIdentifier=keyid:always
+EOF
+    local spec name alg
+    for spec in "rsa:RSA -pkeyopt rsa_keygen_bits:2048" "p256:EC -pkeyopt ec_paramgen_curve:P-256" "ed25519:ED25519"; do
+        name="${spec%%:*}"; alg="${spec#*:}"
+        # shellcheck disable=SC2086
+        openssl genpkey -algorithm $alg -out "$CLIENT_DIR/client-$name.key" 2>/dev/null
+        openssl req -new -key "$CLIENT_DIR/client-$name.key" -out "$CLIENT_DIR/client-$name.csr" \
+            -subj "/CN=sparktls-tlsfuzzer-client" 2>/dev/null
+        openssl x509 -req -in "$CLIENT_DIR/client-$name.csr" -CA "$CLIENT_DIR/ca.crt" -CAkey "$CLIENT_DIR/ca.key" \
+            -CAcreateserial -days 30 -extfile "$CLIENT_DIR/leaf.ext" -out "$CLIENT_DIR/client-$name.crt" 2>/dev/null
+    done
+}
+make_client_certs
+#  The signature_algorithms our server advertises in CertificateRequest,
+#  for the scripts that check that list (-s).
+SERVER_SIGALGS="ed25519 ecdsa_secp256r1_sha256 ecdsa_secp384r1_sha384 rsa_pss_rsae_sha256 rsa_pss_rsae_sha384 rsa_pss_rsae_sha512"
+
 # All TLS 1.3 test scripts
 ALL_TESTS=(
     conversation ccs empty-alert finished record-padding keyupdate
@@ -181,6 +221,10 @@ ALL_TESTS=(
     #  KNOWN GAPS -- expected to fail, listed so they stay measurable:
     #    record-size-limit  RFC 8449 is parsed but not honoured (see #54)
     #    extended-master-*  RFC 7627 Finished path incomplete (see #63)
+    #  2026-09-21: the certificate scripts run against an mTLS server with a
+    #  CA-signed client leaf per key type (see make_client_certs), and the
+    #  scripts that accept -C run on the ECDHE_RSA AEAD suite; both moved a
+    #  dozen scripts from "unsupported" (a harness artefact) to measured.
     record-size-limit
     extended-master-secret-extension
     extended-master-secret-extension-with-client-cert
@@ -268,22 +312,15 @@ classify_failure() {
         #  aes-gcm-nonces, chacha20, fuzzed-ciphertext, large-hello,
         #  extended-master-secret-extension.
         alpn-negotiation \
-        | certificate-request \
         | client-hello-max-size \
-        | early-application-data \
         | ecdhe-padded-shared-secret \
-        | ecdsa-in-certificate-verify \
-        | eddsa-in-certificate-verify \
         | empty-extensions \
         | extended-master-secret-extension-with-client-cert \
         | extensions \
         | fuzzed-finished \
-        | fuzzed-plaintext \
         | invalid-cipher-suites \
         | invalid-client-hello \
         | invalid-client-hello-w-record-overflow \
-        | invalid-compression-methods \
-        | invalid-content-type \
         | invalid-server-name-extension \
         | invalid-session-id \
         | invalid-version \
@@ -296,7 +333,6 @@ classify_failure() {
         | session-ticket-resumption \
         | sig-algs \
         | ssl-death-alert \
-        | truncating-of-client-hello \
         | truncating-of-finished \
         | x25519)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
@@ -308,9 +344,9 @@ classify_failure() {
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="conversations negotiate TLS 1.0/1.1 (refused with protocol_version, RFC 5246 E.1 / RFC 8446 4.2.1) or TLS 1.2 with RSA-KX/CBC suites (handshake_failure); the TLS 1.2 downgrade sentinel itself is covered by BoGo Downgrade-*"
             FAIL_CLASS="unsupported" ;;
-        certificate-verify)
+        ecdsa-in-certificate-verify|eddsa-in-certificate-verify)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="the script's client certificate is the self-signed test CA presented as a leaf, refused with bad_certificate (same policy as x509-limbo rfc5280--ca-as-leaf); and it expects an RSA-only signature_algorithms list in CertificateRequest where we offer Ed25519/ECDSA/RSA-PSS. The 'is refused' cases (unknown, SHA-1 and rsa_pss_pss schemes -> illegal_parameter, RFC 8446 4.4.3) pass since 2026-09-15"
+            FAIL_REASON="expected 130/132: the 'signature is refused' cases sign with a scheme that does not match the client key and expect illegal_parameter; RFC 8446 4.4.3 says 'If the signature algorithm is not acceptable or the signature fails to verify, the receiver MUST abort the handshake with a decrypt_error alert', which is what we send. The ECDSA variant's 'check sigalgs in cert request' also expects the NewSessionTicket before application data (RFC 8446 4.6.1 imposes no order; same class as connection-abort). Client authentication itself: 130 conversations pass against a CA-signed leaf"
             FAIL_CLASS="mismatch" ;;
         large-number-of-extensions \
         | shuffled-extentions \
@@ -318,6 +354,10 @@ classify_failure() {
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
             FAIL_REASON="DoS bounds: a ClientHello with more than 64 extensions is decode_error (the duplicate-extension table, SECURITY_BURNDOWN SR-38) and one over the 32 KB handshake reassembly capacity is decode_error; these scripts send thousands of extensions or 65 KB signature-algorithm lists"
             FAIL_CLASS="mismatch" ;;
+        fuzzed-plaintext)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="runs on the AEAD suite now (sanity passes); the fuzzed-plaintext conversations expect bad_record_mac for corrupted CBC padding/MAC structure, which an AEAD record does not have; they measure CBC behaviour we do not implement"
+            FAIL_CLASS="unsupported" ;;
         large-hello)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
             FAIL_REASON="a ClientHello larger than the 32 KB handshake reassembly buffer (SPARKTLS_Reassembly capacity) is refused with decode_error; the script samples sizes up to 64 KB"
@@ -460,9 +500,36 @@ for test in "${TESTS[@]}"; do
             extra_args=(-n "${TLSFUZZER_LENGTHS_N:-100}"
                         -t "${TLSFUZZER_LENGTHS_TIMEOUT:-10}")
             script_timeout="${TLSFUZZER_LENGTHS_SCRIPT_TIMEOUT:-300}" ;;
-        certificate-verify)
-            extra_args=(-c "$CERT" -k "$KEY")
-            start_server --mtls "$CERT" || {
+        #  These scripts' default conversations need RSA key exchange or a
+        #  CBC suite (unsupported by design). Each accepts -C, so they run
+        #  on the ECDHE_RSA AEAD suite the server offers.
+        invalid-content-type|truncating-of-client-hello|early-application-data|invalid-compression-methods)
+            extra_args=(-d -C TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256) ;;
+        fuzzed-plaintext)
+            extra_args=(-C TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256) ;;
+        #  Client authentication: a CA-signed leaf of the algorithm the
+        #  script exercises, against a server that requires a client
+        #  certificate from that CA.
+        #  These two include conversations without a client certificate,
+        #  so the server requests one but does not require it.
+        certificate-verify|certificate-request)
+            extra_args=(-c "$CLIENT_DIR/client-rsa.crt" -k "$CLIENT_DIR/client-rsa.key" -s "$SERVER_SIGALGS")
+            start_server --mtls "$CLIENT_DIR/ca.crt" || {
+                echo "Error: mTLS server restart failed"; exit 1; }
+            need_restart=true ;;
+        rsa-pss-sigs-on-certificate-verify)
+            extra_args=(-c "$CLIENT_DIR/client-rsa.crt" -k "$CLIENT_DIR/client-rsa.key")
+            start_server --mtls-require "$CLIENT_DIR/ca.crt" || {
+                echo "Error: mTLS server restart failed"; exit 1; }
+            need_restart=true ;;
+        ecdsa-in-certificate-verify)
+            extra_args=(-c "$CLIENT_DIR/client-p256.crt" -k "$CLIENT_DIR/client-p256.key" -s "$SERVER_SIGALGS")
+            start_server --mtls-require "$CLIENT_DIR/ca.crt" || {
+                echo "Error: mTLS server restart failed"; exit 1; }
+            need_restart=true ;;
+        eddsa-in-certificate-verify)
+            extra_args=(-c "$CLIENT_DIR/client-ed25519.crt" -k "$CLIENT_DIR/client-ed25519.key" -s "$SERVER_SIGALGS")
+            start_server --mtls-require "$CLIENT_DIR/ca.crt" || {
                 echo "Error: mTLS server restart failed"; exit 1; }
             need_restart=true ;;
         zero-content-type)

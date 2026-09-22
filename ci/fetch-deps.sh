@@ -30,7 +30,7 @@ SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
 SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-85e55fcc2cf2bc69c805e6c4df8abf3ec10caa2e}"   # master 2026-09-21, scrub pass + buffer-only Base64 (PR merged)
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-a499c75d90cc6e84320a502f803c796af624573e}"   # master 2026-09-21, P-384 blinding, RSA CRT/public primitives exposed, X25519 scrub, stack-residue scanner gate
 
 
 # ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).
@@ -49,7 +49,7 @@ SPARKPIV_REF="${SPARKPIV_REF:-bf2c38662aafa02ff6b358f43606038b23f82457}"   # mai
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
 # integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
 SPARKENTROPY_URL="https://github.com/docandrew/sparkentropy.git"
-SPARKENTROPY_REF="${SPARKENTROPY_REF:-6ada71babb67d85fd59c809b1800f0624bd07c8b}"   # main 2026-09-09, GNAT 16
+SPARKENTROPY_REF="${SPARKENTROPY_REF:-4516f8ad5de3dc85af7bbcb69b7a3337cc1b3fab}"   # main 2026-09-21, health-test failure latches the generator off (PR #1)
 
 clone_at() {
     local url="$1" ref="$2" dir="$3"

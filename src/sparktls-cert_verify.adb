@@ -1090,7 +1090,11 @@ is
       16#EC#, 16#EC#, 16#19#, 16#6A#, 16#CC#, 16#C5#, 16#29#, 16#73#);
 
    procedure Set_Identity
-     (Id : out Identity; Cert_DER : X509.Byte_Seq; Key : Byte_Seq; OK : out Boolean)
+     (Id       : out Identity;
+      Cert_DER : X509.Byte_Seq;
+      Key      : Byte_Seq;
+      Random   : Live_Random_Fn;
+      OK       : out Boolean)
    is
       C    : X509.Certificate;
       P_OK : Boolean;
@@ -1173,10 +1177,13 @@ is
                return;
             end if;
             declare
-               Pt  : SPARKTLSCrypto.P256.Point.P256_Jacobian;
-               Enc : Byte_Seq (0 .. 64);
+               Pt    : SPARKTLSCrypto.P256.Point.P256_Jacobian;
+               Enc   : Byte_Seq (0 .. 64);
+               Blind : Byte_Seq (0 .. 39);   --  scalar/coordinate blinding
             begin
-               SPARKTLSCrypto.P256.Point.P256_Mulgen (Pt, Byte_Seq (Id.ECDSA_P256_Key), 32);
+               Random.all (Blind);
+               SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (Pt, Id.ECDSA_P256_Key, Blind);
+               Sanitize (Blind);
                SPARKTLSCrypto.P256.Point.P256_To_Affine (Pt);
                SPARKTLSCrypto.P256.Point.P256_Encode (Enc, Pt);
                if X509.PK_Length (C) /= 65 or else not Matches_PK (Enc, C) then
@@ -1198,9 +1205,13 @@ is
                return;
             end if;
             declare
-               Enc : Byte_Seq (0 .. 96);
+               Enc   : Byte_Seq (0 .. 96);
+               Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
             begin
-               SPARKTLSCrypto.P384.Point.P384_Mulgen (Enc, Byte_Seq (Id.ECDSA_P384_Key));
+               Random.all (Blind);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded
+                 (Enc, Byte_Seq (Id.ECDSA_P384_Key), Blind);
+               Sanitize (Blind);
                if X509.PK_Length (C) /= 97 or else not Matches_PK (Enc, C) then
                   return;
                end if;

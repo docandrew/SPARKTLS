@@ -26,6 +26,17 @@ procedure Test_TLS12_ECDSA is
       end if;
    end Check;
 
+   --  Deterministic filler for the identity-load blinds: this test is
+   --  about parsing and signing, not about the blind's randomness.
+   procedure Test_Random (Output : out Byte_Seq) is
+      V : Byte := 16#5B#;
+   begin
+      for I in Output'Range loop
+         V := V * 13 + 7;
+         Output (I) := V;
+      end loop;
+   end Test_Random;
+
    function Hex_Val (C : Character) return Byte is
    begin
       case C is
@@ -128,7 +139,7 @@ procedure Test_TLS12_ECDSA is
       P       : N32;
    begin
       SPARKTLS.Cert_Verify.Set_Identity
-        (Id, X509.Byte_Seq (Chain_Leaf_DER), Chain_Leaf_Key, Id_OK);
+        (Id, X509.Byte_Seq (Chain_Leaf_DER), Chain_Leaf_Key, Test_Random'Unrestricted_Access, Id_OK);
       Check ("TLS 1.2 chain test identity loads", Id_OK);
       if not Id_OK then
          return;

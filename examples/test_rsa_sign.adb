@@ -5,6 +5,7 @@ with SPARKNaCl;             use SPARKNaCl;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKTLS;              use SPARKTLS;
 with SPARKTLS.Credentials;
+with Entropy_Random;
 with SPARKTLSCrypto.RSA;
 
 procedure Test_RSA_Sign is
@@ -36,7 +37,8 @@ begin
 
    Put_Line ("Loading RSA identity...");
    Credentials.Load_Identity
-     (Id, "/tmp/rsa_test_cert.pem", "/tmp/rsa_test_key_pkcs8.pem", Id_OK);
+     (Id, "/tmp/rsa_test_cert.pem", "/tmp/rsa_test_key_pkcs8.pem",
+      Entropy_Random.Random'Access, Id_OK);
 
    if not Id_OK then
       Put_Line ("FAIL: Load_Identity failed");

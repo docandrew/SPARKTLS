@@ -165,7 +165,7 @@ begin
 
    SPARKTLS.Credentials.Load_Identity
      (Id, Ada.Command_Line.Argument (1),
-      Ada.Command_Line.Argument (2), Id_OK);
+      Ada.Command_Line.Argument (2), Entropy_Random.Random'Access, Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load certificate/key");
       return;

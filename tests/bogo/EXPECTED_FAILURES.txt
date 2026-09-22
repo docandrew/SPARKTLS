@@ -17,6 +17,12 @@
 # cert where it should reject. Genuine multi-credential-selection gap, now
 # visible. Passing went 1021 -> 1036, unimplemented 507 -> 481.
 #
+#
+# 2026-09-21 UPDATE (skip-list audit): 1477/1547 -> 1675/1745 passing with
+# the same 70 known failures. No library change; the skip globs were
+# narrowed after a fully unskipped measurement run (see CLASSIFICATION.md).
+# One lesson recorded: a trailing comment on an array line swallowed the two
+# globs after it and un-skipped eight Basic-Server-RSA cases for one run.
 # Every name here is a KNOWN failure with an owning task -- not an accepted
 # one. Families: Basic-Client-RenewTicket (#75), Resume-Server-* (#69, #74),
 # ExtendedMasterSecret-*-Server (#63), CertificateVerification*/ClientAuth*

@@ -13,6 +13,7 @@ with Dudect_Helpers;
 procedure Dudect_P384_ECDSA is
    Hash : constant Bytes_48 := (others => 16#42#);
    D    : constant Byte_Seq (0 .. 47) := (others => 16#33#);
+   Blind : constant Byte_Seq (0 .. 55) := (others => 16#7E#);
 
    --  Two distinct nonces for the timing comparison. K0 has the
    --  pattern that triggered ctgrind; K1 has the opposite bit
@@ -32,12 +33,12 @@ procedure Dudect_P384_ECDSA is
 
    procedure Sub_0 is
    begin
-      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K0, R, S, OK);
+      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K0, Blind, R, S, OK);
    end Sub_0;
 
    procedure Sub_1 is
    begin
-      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K1, R, S, OK);
+      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K1, Blind, R, S, OK);
    end Sub_1;
 begin
    Dudect_Helpers.Time_Test

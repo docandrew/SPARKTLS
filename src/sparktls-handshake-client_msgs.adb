@@ -98,15 +98,25 @@ is
 
    subtype P384_Public_Key_Seq is Byte_Seq (0 .. 96);
 
-   procedure Compute_P384_Shared_Secret
-     (Secret : out Bytes_48; OK : out Boolean; SK : in Bytes_48; Peer_PK : in P384_Public_Key_Seq);
+   subtype P384_Blind_Seq is Byte_Seq (0 .. 55);
 
    procedure Compute_P384_Shared_Secret
-     (Secret : out Bytes_48; OK : out Boolean; SK : in Bytes_48; Peer_PK : in P384_Public_Key_Seq)
+     (Secret  : out Bytes_48;
+      OK      : out Boolean;
+      SK      : in  Bytes_48;
+      Peer_PK : in  P384_Public_Key_Seq;
+      Blind   : in  P384_Blind_Seq);
+
+   procedure Compute_P384_Shared_Secret
+     (Secret  : out Bytes_48;
+      OK      : out Boolean;
+      SK      : in  Bytes_48;
+      Peer_PK : in  P384_Public_Key_Seq;
+      Blind   : in  P384_Blind_Seq)
    is
    begin
-      SPARKTLSCrypto.P384.Point.P384_ECDHE
-        (Secret => Secret, OK => OK, SK => SK, Peer_PK => Peer_PK);
+      SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded
+        (Secret => Secret, OK => OK, SK => SK, Peer_PK => Peer_PK, Blind => Blind);
    end Compute_P384_Shared_Secret;
 
    function Effective_ALPN_Count (Cfg : Config) return Natural
@@ -952,7 +962,13 @@ is
             KE.P384_SK := Tmp_P384;
             Sanitize (Tmp_P384);
          end if;
-         SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, KE.P384_SK);
+         declare
+            Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+         begin
+            Gen_Random (Blind);
+            SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (P384_PK_Enc, KE.P384_SK, Blind);
+            Sanitize (Blind);
+         end;
       end;
 
       --  Generate client random (retain CH1's random across HRR).
@@ -1827,12 +1843,16 @@ is
          declare
             Secret_384 : Bytes_48;
             P384_OK    : Boolean;
+            Blind      : P384_Blind_Seq;   --  scalar/coordinate blinding
          begin
+            Random.all (Blind);
             Compute_P384_Shared_Secret
               (Secret  => Secret_384,
                OK      => P384_OK,
                SK      => KE.P384_SK,
-               Peer_PK => KE.P384_PK);
+               Peer_PK => KE.P384_PK,
+               Blind   => Blind);
+            Sanitize (Blind);
             if not P384_OK then
                OK := False;
                return;

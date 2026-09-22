@@ -1083,8 +1083,12 @@ is
             declare
                SS    : Bytes_48;
                OK384 : Boolean;
+               Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
             begin
-               SPARKTLSCrypto.P384.Point.P384_ECDHE (SS, OK384, HC.KE.P384_SK, HC.KE.P384_PK);
+               Gen (Blind);
+               SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded
+                 (SS, OK384, HC.KE.P384_SK, HC.KE.P384_PK, Blind);
+               Sanitize (Blind);
                if OK384 then
                   HC.KE.Shared := (others => 0);
                   HC.KE.Shared (0 .. 47) := SS;

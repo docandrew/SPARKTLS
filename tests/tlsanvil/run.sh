@@ -81,8 +81,15 @@ docker_run pull ghcr.io/tls-attacker/tlsanvil:latest 2>&1 | tail -1
 
 # Start sparktls server. Use ECDSA P-256 cert: TLS-Anvil's cert
 # scanner crashes on Ed25519 server certs. RSA also works.
+#  Two identities: TLS-Anvil's TLS 1.2 tests include parameter combinations
+#  whose supported_groups omit secp256r1; with only a P-256 certificate
+#  RFC 8422 5.3 obliges us to refuse them (handshake_failure), which Anvil
+#  scores as a failure. With an RSA identity alongside, the server selects
+#  it for those clients (Config.Identities) and the handshake completes.
 "$SERVER" "$REPO_ROOT/tests/certs/p256.crt" \
-          "$REPO_ROOT/tests/certs/p256.key" 2>/dev/null &
+          "$REPO_ROOT/tests/certs/p256.key" \
+          --identity "$REPO_ROOT/tests/certs/rsa2056.crt" \
+                     "$REPO_ROOT/tests/certs/rsa2056.key" 2>/dev/null &
 sleep 2
 
 if ! ss -tlnp 2>/dev/null | grep -q ":$PORT "; then
