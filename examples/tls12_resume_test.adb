@@ -81,7 +81,6 @@ procedure TLS12_Resume_Test is
       OK_Out := False;
       Got_Ticket := False;
 
-      Cfg.Random := Entropy_Random.Random'Access;
       Cfg.Versions := TLS_1_2_Only;
       Cfg.Get_Time := Current_Time'Unrestricted_Access;
       --  -cafile verifies the server against that trust store (RFC 5280

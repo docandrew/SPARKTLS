@@ -33,12 +33,12 @@ procedure Test_RSA_Sign is
    Sign_OK  : Boolean;
    Vfy_OK   : Boolean;
 begin
+   Entropy_Random.Init;   --  SPARKTLS.RBG, used by Load_Identity's key check
    Random_Byte.Reset (Gen);
 
    Put_Line ("Loading RSA identity...");
    Credentials.Load_Identity
-     (Id, "/tmp/rsa_test_cert.pem", "/tmp/rsa_test_key_pkcs8.pem",
-      Entropy_Random.Random'Access, Id_OK);
+     (Id, "/tmp/rsa_test_cert.pem", "/tmp/rsa_test_key_pkcs8.pem", Id_OK);
 
    if not Id_OK then
       Put_Line ("FAIL: Load_Identity failed");

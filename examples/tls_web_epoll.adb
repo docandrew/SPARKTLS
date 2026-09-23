@@ -694,7 +694,7 @@ begin
    Entropy_Random.Init;
    --  Seed the stateless-ticket (RFC 5077) TEK ring so resumption works.
    SPARKTLS.Ticket_Keys.Initialize
-     (Random => Entropy_Random.Random'Access, Clock => null);
+     (Clock => null);
 
    --  Parse arguments
    if Ada.Command_Line.Argument_Count < 2 then
@@ -706,7 +706,6 @@ begin
      (Id,
       Ada.Command_Line.Argument (1),
       Ada.Command_Line.Argument (2),
-      Entropy_Random.Random'Access,
       Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load identity");
@@ -814,7 +813,6 @@ begin
                         Conns (Conn_Index (Slot)).S :=
                           SPARKTLS.Server.Configure
                             ((Local   => Id'Unchecked_Access,
-                              Random  => Entropy_Random.Random'Access,
                               Get_Active_TEK =>
                                 SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
                               Get_TEK_By_Id  =>

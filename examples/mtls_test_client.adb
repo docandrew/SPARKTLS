@@ -326,7 +326,7 @@ begin
                Id_OK := Id_OK and S_OK;
             end;
          else
-            SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
+            SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
          end if;
          if not Id_OK then
             Err ("load identity failed: " & Cert);
@@ -345,7 +345,6 @@ begin
      ((Server_Name          => SPARKTLS.To_Name (Cfg_Host (1 .. Cfg_Host_Len)),
        Trust                =>
           (if Have_Trust then Roots'Unchecked_Access else null),
-       Random               => Entropy_Random.Random'Access,
        Get_Time             => Current_Time'Unrestricted_Access,
        Local                =>
           (if Have_Local then Id'Unchecked_Access

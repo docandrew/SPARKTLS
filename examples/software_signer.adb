@@ -16,7 +16,7 @@ package body Software_Signer is
 
    procedure Init (Cert_Path, Key_Path : String; OK : out Boolean) is
    begin
-      Credentials.Load_Identity (Key_Id, Cert_Path, Key_Path, Entropy_Random.Random'Access, OK);
+      Credentials.Load_Identity (Key_Id, Cert_Path, Key_Path, OK);
       Loaded := OK;
    end Init;
 

@@ -9,6 +9,7 @@
 --
 --  Output: bin/tests/bogo_shim
 with "../../sparktls.gpr";
+with "../../../sparkentropy/sparkentropy.gpr";   --  examples/entropy_random.adb (SPARKEntropy behind SPARKTLS.RBG)
 
 project Bogo_Shim is
    for Create_Missing_Dirs use "True";

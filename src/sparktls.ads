@@ -538,6 +538,7 @@ is
       Missing_Extension,           --  RFC 8446 6 alert 109
       No_Application_Protocol,     --  RFC 7301 3.2 alert 120
       Internal_Error,
+      Entropy_Failure,             --  the CSPRNG returned nothing (alert 80 on the wire)
       Insufficient_Buffer,
       Bad_Configuration,           --  Internal-only: Rejected configuration
       No_Free_Sessions,            --  Internal-only: HS_Pool exhausted
@@ -823,6 +824,7 @@ is
          when Certificate_Required      => 116,
          when No_Application_Protocol   => 120,
          when Internal_Error
+            | Entropy_Failure
             | Insufficient_Buffer
             | No_Error
             | Bad_Configuration
@@ -1012,35 +1014,32 @@ is
    is (K.Counter >= Rekey_After_Records - Rekey_Margin);
 
    ----------------------------------------------------------------------------
-   --  Random byte generation callback
+   --  Randomness
    --
-   --  The caller must supply a CSPRNG. This is the only callback;
-   --  everything else is buffer-based.
+   --  Every random byte the library uses comes from SPARKTLS.RBG, the
+   --  process-wide SP 800-90A HMAC_DRBG the application starts once with
+   --  RBG.Init and its entropy source (SPARKEntropy in the examples).
+   --  There is no per-configuration generator to supply or forget.
    --
-   --  Call pattern: a full handshake draws about twenty times (ephemeral
-   --  key, randoms, scalar blinds, salts, ticket material), mostly 32 to
-   --  40 bytes each. A callback that performs a syscall per draw pays for
-   --  it: getrandom derives a fresh key on every call regardless of size,
-   --  and the example server spent ~16% of its CPU there before pooling.
-   --  Serve draws from a pool refilled in one read (see
-   --  examples/entropy_random.adb), or from a userspace DRBG.
+   --  The one thing the library checks itself is that a draw is not all
+   --  zero, which is what the generator hands back once it has latched
+   --  off (its entropy source failed persistently, or it was never
+   --  started): such a draw fails the operation with Entropy_Failure.
+   --  Probability for a live generator: 2^-256 per draw.
    ----------------------------------------------------------------------------
 
-   type Random_Bytes_Fn is access procedure (Output : out Byte_Seq);
-
-   --  A Random_Bytes_Fn cannot report failure. The one failure that is
-   --  detectable from the outside is a generator that returned nothing
-   --  (all zero): the private-scalar and ticket-key draws test for it and
-   --  fail the handshake (internal_error) rather than proceed with a
-   --  known key. Probability for a live generator: 2^-256 per draw.
    function All_Zero_Bytes (B : Byte_Seq) return Boolean
    is (for all I in B'Range => B (I) = 0);
 
-   --  The null-excluding view: subprograms that WILL call the generator
-   --  take this subtype, so "is there a generator?" is answered by the
-   --  type at the boundary instead of a threaded null-check Pre. The
-   --  fact originates at Ready_Config's predicate and flows down.
-   subtype Live_Random_Fn is not null Random_Bytes_Fn;
+   --  Draw random bytes, fail closed on an all-zero result. Every draw in
+   --  the library goes through here so that a dead generator is detected
+   --  at the first draw and the caller gets a Boolean it can act on
+   --  instead of zeros it must remember to check. The Post is what call
+   --  sites rely on.
+   procedure Draw
+     (Output : out Byte_Seq;
+      OK     : out Boolean)
+   with Post => OK = (not All_Zero_Bytes (Output));
 
    --  Time callback for certificate validation.
    --  Called at validation time, not at configuration time.
@@ -1695,13 +1694,6 @@ is
    with Pre => TEK'Length = 32;
 
    ----------------------------------------------------------------------------
-   --  Not_Random
-   --  Default initializer for Config.Random RNG function. Used only as a
-   --  sentinel value to detect apps not passing in an RNG.
-   ----------------------------------------------------------------------------
-   procedure Not_Random (Output : out Byte_Seq);
-
-   ----------------------------------------------------------------------------
    --  Application peer-certificate verification hook (veto only)
    --
    --  The proven core always runs first: chain building to a configured
@@ -1744,7 +1736,6 @@ is
    --  Config
    ----------------------------------------------------------------------------
    type Config is record
-      Random      : Live_Random_Fn := Not_Random'Access;
       Server_Name : Hostname_Buf;
       Skip_Verify : Boolean := False;  --  accept any cert
 
@@ -1971,7 +1962,7 @@ is
       --  key material and the CSPRNG already are.
       --
       --  Rotation is ON BY DEFAULT (24 h) once the app calls
-      --      Ticket_Keys.Initialize (Random, Clock, Rotation_Interval)
+      --      Ticket_Keys.Initialize (Clock, Rotation_Interval)
       --  and is LAZY: Get_Active_TEK checks the active key's age on each
       --  ticket issuance and rotates in place, so the check rides on real
       --  traffic and an idle server does no work. No timer task.
@@ -2010,6 +2001,7 @@ is
       --  psk_dhe_ke mode (fresh DH mixed into the handshake secret).
       Resume_Ticket : Session_Ticket;
    end record;
+
 
    ----------------------------------------------------------------------------
    --  Session
@@ -3308,11 +3300,6 @@ is
    function To_Name (ALPN_Str : String) return Hostname_Buf
    with Pre => ALPN_Str'Length <= Max_Hostname_Len;
 
-   ----------------------------------------------------------------------------
-   --  Is_Sentinel_Random
-   --  Check to see if RNG callback has been initialized
-   ----------------------------------------------------------------------------
-   function Is_Sentinel_Random (F : Live_Random_Fn) return Boolean;
 private
 
    type Session (Role : TLS_Role) is record

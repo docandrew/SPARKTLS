@@ -1421,7 +1421,6 @@ is
          Id              => Cfg.Local.all,
          Sig_Algo_Wire   => S.HC.Negotiated_Sig_Algo,
          Role            => Role_Server,
-         Random          => Cfg.Random,
          Sign            => Cfg.Sign,
          Arena_Storage   => D.Arena_Storage,
          Result          => CV_Buf,
@@ -2843,17 +2842,22 @@ is
       --  Seal the PSK into a stateless ticket under the active TEK. The
       --  same AES-256-GCM machinery TLS 1.2 tickets use; the Kind tag
       --  stops it being replayed against a 1.2 session.
-      if S.HC.Cfg.Get_Active_TEK /= null and then S.HC.Cfg.Random /= null then
+      if S.HC.Cfg.Get_Active_TEK /= null then
          declare
             Key_ID     : Byte_Seq (0 .. 3) := (others => 0);
             TEK        : Byte_Seq (0 .. 31) := (others => 0);
             Have_TEK   : Boolean := False;
             AEAD_Nonce : Byte_Seq (0 .. 11) := (others => 0);
             Plain      : SPARKTLS.Tickets.Ticket_Plain;
+            Rand_OK    : Boolean := False;
          begin
             S.HC.Cfg.Get_Active_TEK.all (Key_ID, TEK, Have_TEK);
             if Have_TEK then
-               S.HC.Cfg.Random.all (AEAD_Nonce);
+               --  No nonce, no ticket: a dead generator skips the NST rather
+               --  than sealing under a zero nonce (Ticket_Len stays 0).
+               Draw (AEAD_Nonce, Rand_OK);
+            end if;
+            if Have_TEK and then Rand_OK then
                Plain.Secret      := PSK_Sealed;
                Plain.Secret_Len  := Sec_Len;
                Plain.Suite       := Wire_Of (S.Negotiated_Suite);
@@ -3090,8 +3094,12 @@ is
               Byte_Seq (0 .. SPARKTLS.Tickets.Max_Ticket_Wire_Len - 1) :=
                 (others => 0);
             Sealed_Len    : N32 := 0;
+            Rand_OK       : Boolean;
          begin
-            S.HC.Cfg.Random.all (Ticket_Random);
+            --  A dead generator means no ticket (the handshake itself is
+            --  complete).
+            Draw (Ticket_Random, Rand_OK);
+            if Rand_OK then
             Nonce := Ticket_Random (0 .. 1);
             Age_Add :=
               Unsigned_32 (Ticket_Random (2)) * 2 ** 24
@@ -3106,6 +3114,7 @@ is
 
             if Sealed_Len > 0 then
                Send_New_Session_Ticket_13 (S, Nonce, Age_Add, Sealed, Sealed_Len);
+            end if;
             end if;
          end;
 

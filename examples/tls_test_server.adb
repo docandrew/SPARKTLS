@@ -57,7 +57,6 @@ begin
      (Id,
       Ada.Command_Line.Argument (1),
       Ada.Command_Line.Argument (2),
-      Entropy_Random.Random'Access,
       Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load identity");
@@ -108,7 +107,6 @@ begin
    --  Initialize TLS server session
    S := SPARKTLS.Server.Configure
      ((Local  => Id'Unchecked_Access,
-       Random => Entropy_Random.Random'Access,
        others => <>));
 
    Put_Line ("Waiting for ClientHello...");

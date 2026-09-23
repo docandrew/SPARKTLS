@@ -31,10 +31,9 @@ is
    --  set it (Rotate, Clear) are then checked at their source.
    subtype Key_Index is Natural range 0 .. TLS12_Max_Keys - 1;
 
-   --  Rotation settings. Held outside the protected object on purpose: the
-   --  CSPRNG is a user callback and must never be invoked while holding the
-   --  lock (a potentially blocking operation would stall every other task).
-   Rand_Fn  : Random_Bytes_Fn := null;
+   --  Rotation settings. Key generation (SPARKTLS.RBG, which may reseed
+   --  from the entropy source) runs outside the lock, so a slow reseed
+   --  cannot stall other tasks.
    Clock_Fn : Get_Time_Fn := null;
    Interval : Unsigned_64 := 0;
 
@@ -143,30 +142,29 @@ is
    ----------------------------------------------------------------------
 
    procedure Initialize
-     (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600)
+     (Clock             : Get_Time_Fn;
+      Rotation_Interval : Unsigned_32 := 24 * 3600)
    is
       Key_ID   : Byte_Seq (0 .. 3) := (others => 0);
       TEK      : Byte_Seq (0 .. 31) := (others => 0);
       Now      : Unsigned_64 := 0;
+      Rand_OK  : Boolean;
    begin
-      Rand_Fn  := Random;
       Clock_Fn := Clock;
       Interval := Unsigned_64 (Rotation_Interval);
-
-      if Random = null then
-         return;   --  no CSPRNG, no keys; tickets are simply not issued
-      end if;
 
       if Clock /= null then
          Now := SPARKTLS.Tickets.To_Unix_Seconds (Clock.all);
       end if;
 
       --  Generated outside the lock, installed inside it. A generator that
-      --  returned an all-zero key is dead: install nothing, so no ticket is
-      --  ever sealed under a known key.
-      Random.all (Key_ID);
-      Random.all (TEK);
-      if All_Zero_Bytes (TEK) then
+      --  returned nothing is dead: install nothing, so no ticket is ever
+      --  sealed under a known key.
+      Draw (Key_ID, Rand_OK);
+      if Rand_OK then
+         Draw (TEK, Rand_OK);
+      end if;
+      if not Rand_OK then
          return;
       end if;
       Cache.Rotate (Key_ID, TEK, Now);
@@ -183,15 +181,11 @@ is
    procedure Maybe_Rotate is
       Now    : Unsigned_64;
       Age    : Unsigned_64;
-      Key_ID : Byte_Seq (0 .. 3) := (others => 0);
-      TEK    : Byte_Seq (0 .. 31) := (others => 0);
+      Key_ID  : Byte_Seq (0 .. 3) := (others => 0);
+      TEK     : Byte_Seq (0 .. 31) := (others => 0);
+      Rand_OK : Boolean;
    begin
-      --  Rand_Fn = null is a real case, not a proof nicety: Initialize stores
-      --  Interval and Clock_Fn before its Random = null early return, so a
-      --  clock-but-no-CSPRNG configuration would otherwise reach Rand_Fn.all
-      --  below on the first Get_Active_TEK. Found by SPARK when this unit
-      --  went back to SPARK_Mode On (2026-09-11).
-      if Interval = 0 or else Clock_Fn = null or else Rand_Fn = null then
+      if Interval = 0 or else Clock_Fn = null then
          return;   --  manual control, no CSPRNG, or not initialised
 
       end if;
@@ -206,8 +200,15 @@ is
       if Age < Interval then
          return;
       end if;
-      Rand_Fn.all (Key_ID);
-      Rand_Fn.all (TEK);
+      --  A dead generator does not rotate: the old key stays in service
+      --  rather than a zero key going in.
+      Draw (Key_ID, Rand_OK);
+      if Rand_OK then
+         Draw (TEK, Rand_OK);
+      end if;
+      if not Rand_OK then
+         return;
+      end if;
       Cache.Rotate (Key_ID, TEK, Now);
    end Maybe_Rotate;
 

@@ -868,7 +868,8 @@ is
       PK_Bytes      : out Byte_Seq;
       P256_PK_Enc   : out Byte_Seq;
       P384_PK_Enc   : out Byte_Seq;
-      Hybrid_Share  : out Byte_Seq)
+      Hybrid_Share  : out Byte_Seq;
+      OK            : out Boolean)
    with
      Pre =>
        PK_Bytes'First = 0
@@ -880,8 +881,15 @@ is
        and then Hybrid_Share'First = 0
        and then Hybrid_Share'Last = Hybrid_Client_Share_Len - 1
    is
-      procedure Gen_Random (Output : out Byte_Seq) renames Cfg.Random.all;
+      Rand_OK : Boolean;
    begin
+      --  Every draw goes through Draw: a generator that returns nothing
+      --  fails the build (OK False) before
+      --  any zero-derived key reaches the wire.
+      OK := False;
+      PK_Bytes := (others => 0);
+      P256_PK_Enc := (others => 0);
+      P384_PK_Enc := (others => 0);
       --  X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem): an ML-KEM-768 key
       --  pair from 64 bytes of randomness (d, z) and an X25519 key pair
       --  independent of the pure X25519 share's. Retry mode reuses both.
@@ -890,18 +898,28 @@ is
       if Need_Hybrid then
          if not Retry_Mode then
             declare
-               D, Z : Bytes_32;
+               D, Z : Bytes_32 := (others => 0);
                Key  : MLKEM.ML_KEM_768.MLKEM_Key;
-               SK   : Bytes_32;
+               SK   : Bytes_32 := (others => 0);
             begin
-               Gen_Random (Byte_Seq (D));
-               Gen_Random (Byte_Seq (Z));
+               Draw (Byte_Seq (D), Rand_OK);
+               if Rand_OK then
+                  Draw (Byte_Seq (Z), Rand_OK);
+               end if;
+               if Rand_OK then
+                  Draw (Byte_Seq (SK), Rand_OK);
+               end if;
+               if not Rand_OK then
+                  Sanitize (D);
+                  Sanitize (Z);
+                  Sanitize (SK);
+                  return;
+               end if;
                MLKEM.ML_KEM_768.MLKEM_KeyGen (MLKEM.Bytes_32 (D), MLKEM.Bytes_32 (Z), Key);
                KE.Hybrid_DK := Key.DK;
                MLKEM.Sanitize (Key.DK);
                Sanitize (D);
                Sanitize (Z);
-               Gen_Random (Byte_Seq (SK));
                KE.Hybrid_SK := SK;
                Sanitize (SK);
             end;
@@ -921,7 +939,10 @@ is
          Tmp_X25519 : Bytes_32;
       begin
          if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_X25519));
+            Draw (Byte_Seq (Tmp_X25519), Rand_OK);
+            if not Rand_OK then
+               return;
+            end if;
             KE.Local_SK := Tmp_X25519;
             Sanitize (Tmp_X25519);
          end if;
@@ -938,14 +959,20 @@ is
          Tmp_P256 : Bytes_32;
       begin
          if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_P256));
+            Draw (Byte_Seq (Tmp_P256), Rand_OK);
+            if not Rand_OK then
+               return;
+            end if;
             KE.P256_SK := Tmp_P256;
             Sanitize (Tmp_P256);
          end if;
          declare
             Blind : Byte_Seq (0 .. 39);   --  SR-62
          begin
-            Gen_Random (Blind);
+            Draw (Blind, Rand_OK);
+            if not Rand_OK then
+               return;
+            end if;
             SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (P256_Pt, KE.P256_SK, Blind);
             Sanitize (Blind);
          end;
@@ -958,14 +985,20 @@ is
          Tmp_P384 : Bytes_48;
       begin
          if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_P384));
+            Draw (Byte_Seq (Tmp_P384), Rand_OK);
+            if not Rand_OK then
+               return;
+            end if;
             KE.P384_SK := Tmp_P384;
             Sanitize (Tmp_P384);
          end if;
          declare
             Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
          begin
-            Gen_Random (Blind);
+            Draw (Blind, Rand_OK);
+            if not Rand_OK then
+               return;
+            end if;
             SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (P384_PK_Enc, KE.P384_SK, Blind);
             Sanitize (Blind);
          end;
@@ -976,7 +1009,10 @@ is
          Tmp_CR : Bytes_32;
       begin
          if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_CR));
+            Draw (Byte_Seq (Tmp_CR), Rand_OK);
+            if not Rand_OK then
+               return;
+            end if;
             Client_Random := Tmp_CR;
          end if;
       end;
@@ -994,11 +1030,15 @@ is
             if Cfg.Versions = TLS_1_2_Only then
                Legacy_Session_ID := (others => 0);
             else
-               Gen_Random (Legacy_Session_ID);
+               Draw (Legacy_Session_ID, Rand_OK);
+               if not Rand_OK then
+                  return;
+               end if;
             end if;
             Session_ID := Legacy_Session_ID;
          end if;
       end;
+      OK := True;
    end Generate_CH_Ephemerals;
 
    type Shares_Len_Array is array (Maybe_ECDHE_Group) of N32;
@@ -1222,9 +1262,19 @@ is
       HC.PSK.Offered := False;
       HC.Using_PSK := False;
 
-      Generate_CH_Ephemerals
-        (HC.Cfg, HC.KE, HC.Client_Random, HC.Legacy_Session_ID,
-         Retry_Mode, Need_Hybrid, PK_Bytes, P256_PK_Enc, P384_PK_Enc, Hybrid_Share);
+      declare
+         Eph_OK : Boolean;
+      begin
+         Generate_CH_Ephemerals
+           (HC.Cfg, HC.KE, HC.Client_Random, HC.Legacy_Session_ID,
+            Retry_Mode, Need_Hybrid, PK_Bytes, P256_PK_Enc, P384_PK_Enc, Hybrid_Share, Eph_OK);
+         if not Eph_OK then
+            --  The generator returned nothing; Len stays 0 and the caller
+            --  reads Entropy_Failure here instead of a generic failure.
+            HC.Ext_Parse_Err := Entropy_Failure;
+            return;
+         end if;
+      end;
       --  Record the length actually put on the wire (below): the TLS 1.2
       --  ServerHello check compares the echo against it. It was never set
       --  here before, so a TLS 1.2 server that echoed our session_id (RFC
@@ -1828,11 +1878,11 @@ is
    end Downgrade_Sentinel_Present;
 
    procedure Compute_SH_Shared_Secret
-     (KE     : in out KE_State;
-      Random : in     Live_Random_Fn;
-      OK     : out Boolean;
-      Err    : out Error_Code)
+     (KE      : in out KE_State;
+      OK      : out Boolean;
+      Err     : out Error_Code)
    is
+      Rand_OK : Boolean;
    begin
       OK  := True;
       Err := No_Error;
@@ -1845,7 +1895,12 @@ is
             P384_OK    : Boolean;
             Blind      : P384_Blind_Seq;   --  scalar/coordinate blinding
          begin
-            Random.all (Blind);
+            Draw (Blind, Rand_OK);
+            if not Rand_OK then
+               OK := False;
+               Err := Entropy_Failure;
+               return;
+            end if;
             Compute_P384_Shared_Secret
               (Secret  => Secret_384,
                OK      => P384_OK,
@@ -1876,8 +1931,14 @@ is
             declare
                Blind : Byte_Seq (0 .. 39);
             begin
-               Random.all (Blind);
+               Draw (Blind, Rand_OK);
+               if not Rand_OK then
+                  OK := False;
+                  Err := Entropy_Failure;
+                  return;
+               end if;
                SPARKTLSCrypto.P256.Point.P256_Mul_Blinded (Peer_Pt, KE.P256_SK, Blind);
+               Sanitize (Blind);
             end;
             SPARKTLSCrypto.P256.Point.P256_To_Affine (Peer_Pt);
             --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
@@ -3009,7 +3070,7 @@ is
          SS_OK  : Boolean;
          SS_Err : Error_Code;
       begin
-         Compute_SH_Shared_Secret (HC.KE, HC.Cfg.Random, SS_OK, SS_Err);
+         Compute_SH_Shared_Secret (HC.KE, SS_OK, SS_Err);
          if not SS_OK then
             Err := SS_Err;
             return;

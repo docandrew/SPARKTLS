@@ -586,7 +586,7 @@ is
       procedure Flight
         (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
       is
-         Gen_Random : constant Random_Bytes_Fn := Cfg.Random;
+         Rand_OK    : Boolean;
          Rec_Out    : N32;
          CR_OK      : Boolean;
          --  Atomic flight assembly: build every record into a scratch buffer
@@ -647,23 +647,23 @@ is
 
          case S.HC.KE.Curve is
             when Group_X25519    =>
-               Gen_Random (Byte_Seq (S.HC.KE.Local_SK));
-               if All_Zero_Bytes (Byte_Seq (S.HC.KE.Local_SK)) then
-                  Send_Alert_And_Error (S, Internal_Error, Result);
+               Draw (Byte_Seq (S.HC.KE.Local_SK), Rand_OK);
+               if not Rand_OK then
+                  Send_Alert_And_Error (S, Entropy_Failure, Result);
                   return;
                end if;
 
             when Group_Secp256r1 =>
-               Gen_Random (Byte_Seq (S.HC.KE.P256_SK));
-               if All_Zero_Bytes (Byte_Seq (S.HC.KE.P256_SK)) then
-                  Send_Alert_And_Error (S, Internal_Error, Result);
+               Draw (Byte_Seq (S.HC.KE.P256_SK), Rand_OK);
+               if not Rand_OK then
+                  Send_Alert_And_Error (S, Entropy_Failure, Result);
                   return;
                end if;
 
             when Group_Secp384r1 =>
-               Gen_Random (Byte_Seq (S.HC.KE.P384_SK));
-               if All_Zero_Bytes (Byte_Seq (S.HC.KE.P384_SK)) then
-                  Send_Alert_And_Error (S, Internal_Error, Result);
+               Draw (Byte_Seq (S.HC.KE.P384_SK), Rand_OK);
+               if not Rand_OK then
+                  Send_Alert_And_Error (S, Entropy_Failure, Result);
                   return;
                end if;
 
@@ -694,7 +694,8 @@ is
             Build_Server_Hello_12 (S.Negotiated_Suite, S.Negotiated_ALPN, S.HC, Hello_Buf, Hello_Len);
             pragma Assert (S.Role = Role_Server);
             if Hello_Len = 0 then
-               Send_Alert_And_Error (S, Internal_Error, Result);
+               Send_Alert_And_Error
+                 (S, (if S.HC.Ext_Parse_Err = Entropy_Failure then Entropy_Failure else Internal_Error), Result);
                return;
             end if;
             Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
@@ -749,7 +750,7 @@ is
             SKE_Len : N32;
          begin
             pragma Assert (S.HC.KE.Negotiated);
-            Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, Cfg.Sign, SKE_Buf, SKE_Len);
+            Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Cfg.Sign, SKE_Buf, SKE_Len);
             --  An ECDHE suite was negotiated (KE.Negotiated), so a
             --  ServerKeyExchange is mandatory here. A zero length means the
             --  signature step failed closed (RSA verify-after-sign mismatch,
@@ -945,7 +946,8 @@ is
       Cfg     : in Ready_Config;
       Key_ID  : in SPARKTLS.Tickets.Bytes_4;
       TEK     : in SPARKTLS.Tickets.Bytes_32;
-      OK      : out Boolean)
+      OK      : out Boolean;
+      Err     : out Error_Code)
    is
       Nonce_Buf   : Byte_Seq (0 .. 11) := (others => 0);
       Plain       : SPARKTLS.Tickets.Ticket_Plain;
@@ -954,9 +956,15 @@ is
       NST_Buf     : Byte_Seq (0 .. 271) := (others => 0);
       NST_Total   : N32;
       NST_Rec_Out : N32;
+      Rand_OK     : Boolean;
    begin
       OK := False;
-      Cfg.Random.all (Nonce_Buf);
+      Err := Insufficient_Buffer;   --  the only other way to fail below
+      Draw (Nonce_Buf, Rand_OK);
+      if not Rand_OK then
+         Err := Entropy_Failure;   --  no nonce, no ticket
+         return;
+      end if;
       Plain.Secret := S.HC.Master_Secret_12;
       Plain.Secret_Len := 48;
       Plain.Kind := SPARKTLS.Tickets.Kind_TLS12;
@@ -1008,6 +1016,7 @@ is
       end if;
 
       OK := True;
+      Err := No_Error;
    end Issue_Resumed_NST_12;
 
    procedure Build_Abbreviated_Server_Flight_12
@@ -1032,7 +1041,6 @@ is
       is
          use Key_Schedule_12;
          use type SPARKTLS.Tickets.Bytes_4;
-         Gen_Random    : constant Random_Bytes_Fn := Cfg.Random;
          Rec_Out       : N32;
          Use_384       : constant Boolean :=
            S.Negotiated_Suite
@@ -1044,6 +1052,7 @@ is
          Active_TEK    : Byte_Seq (0 .. 31) := (others => 0);
          Have_TEK      : Boolean := False;
          NST_OK        : Boolean;
+         NST_Err       : Error_Code;
       begin
          --  Get_Time /= null for the same reason as the full flight: an
          --  unexpirable ticket is worse than no ticket. Have_TEK stays
@@ -1061,8 +1070,13 @@ is
          --  Fresh server random (32 bytes).
          declare
             Server_Random : Bytes_32;
+            Rand_OK       : Boolean;
          begin
-            Gen_Random (Byte_Seq (Server_Random));
+            Draw (Byte_Seq (Server_Random), Rand_OK);
+            if not Rand_OK then
+               Send_Alert_And_Error (S, Entropy_Failure, Result);
+               return;
+            end if;
             Set_Server_Random_12 (S.HC, Server_Random);
          end;
 
@@ -1085,7 +1099,8 @@ is
             end if;
             Build_Server_Hello_12 (S.Negotiated_Suite, S.Negotiated_ALPN, S.HC, Hello_Buf, Hello_Len);
             if Hello_Len = 0 then
-               Send_Alert_And_Error (S, Internal_Error, Result);
+               Send_Alert_And_Error
+                 (S, (if S.HC.Ext_Parse_Err = Entropy_Failure then Entropy_Failure else Internal_Error), Result);
                return;
             end if;
             Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
@@ -1108,13 +1123,14 @@ is
             Cfg,
             SPARKTLS.Tickets.Bytes_4 (Active_Key_ID),
             SPARKTLS.Tickets.Bytes_32 (Active_TEK),
-            NST_OK);
+            NST_OK,
+            NST_Err);
          pragma Warnings (GNATProve, Off, "statement has no effect");
          Sanitize (Active_TEK);
          pragma Warnings (GNATProve, On, "statement has no effect");
 
          if not NST_OK then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            Send_Alert_And_Error (S, NST_Err, Result);
             return;
          end if;
 
@@ -1621,7 +1637,9 @@ is
    end Shared_Secret_X25519_12;
 
    procedure Shared_Secret_P256_12
-     (KE : in out KE_State; Random : in Live_Random_Fn; OK : out Boolean; Err : out Error_Code)
+     (KE      : in out KE_State;
+      OK      : out Boolean;
+      Err     : out Error_Code)
    is
       use SPARKTLSCrypto.P256.Point;
       Pt : P256_Jacobian;
@@ -1632,10 +1650,16 @@ is
       P256_Decode (Pt, KE.P256_PK, V);
       if V /= 0 then
          declare
-            Blind : Byte_Seq (0 .. 39);   --  SR-62
+            Blind   : Byte_Seq (0 .. 39);   --  SR-62
+            Rand_OK : Boolean;
          begin
-            Random.all (Blind);
+            Draw (Blind, Rand_OK);
+            if not Rand_OK then
+               Err := Entropy_Failure;
+               return;
+            end if;
             P256_Mul_Blinded (Pt, KE.P256_SK, Blind);
+            Sanitize (Blind);
          end;
          P256_To_Affine (Pt);
          declare
@@ -1651,13 +1675,21 @@ is
    end Shared_Secret_P256_12;
 
    procedure Shared_Secret_P384_12
-     (KE : in out KE_State; Random : in Live_Random_Fn; OK : out Boolean; Err : out Error_Code)
+     (KE      : in out KE_State;
+      OK      : out Boolean;
+      Err     : out Error_Code)
    is
-      SS    : Bytes_48;
-      OK384 : Boolean;
-      Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+      SS      : Bytes_48;
+      OK384   : Boolean;
+      Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+      Rand_OK : Boolean;
    begin
-      Random.all (Blind);
+      Draw (Blind, Rand_OK);
+      if not Rand_OK then
+         OK := False;
+         Err := Entropy_Failure;
+         return;
+      end if;
       SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded (SS, OK384, KE.P384_SK, KE.P384_PK, Blind);
       Sanitize (Blind);
       if OK384 then
@@ -1702,17 +1734,19 @@ is
    --  illegal_parameter; an unselectable group is the generic
    --  handshake_failure.
    procedure Compute_Shared_Secret_12
-     (KE : in out KE_State; Random : in Live_Random_Fn; OK : out Boolean; Err : out Error_Code) is
+     (KE      : in out KE_State;
+      OK      : out Boolean;
+      Err     : out Error_Code) is
    begin
       case KE.Curve is
          when Group_X25519    =>
             Shared_Secret_X25519_12 (KE, OK, Err);
 
          when Group_Secp256r1 =>
-            Shared_Secret_P256_12 (KE, Random, OK, Err);
+            Shared_Secret_P256_12 (KE, OK, Err);
 
          when Group_Secp384r1 =>
-            Shared_Secret_P384_12 (KE, Random, OK, Err);
+            Shared_Secret_P384_12 (KE, OK, Err);
 
          when Group_X25519MLKEM768 =>
             --  TLS 1.3 only; never negotiated by the TLS 1.2 server.
@@ -1781,7 +1815,7 @@ is
          SS_OK  : Boolean := False;
          SS_Err : Error_Code := Handshake_Failure;
       begin
-         Compute_Shared_Secret_12 (S.HC.KE, S.HC.Cfg.Random, SS_OK, SS_Err);
+         Compute_Shared_Secret_12 (S.HC.KE, SS_OK, SS_Err);
          if not SS_OK then
             Send_Alert_And_Error (S, SS_Err, Result);
             pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
@@ -2520,9 +2554,18 @@ is
             NST_Buf     : Byte_Seq (0 .. 271);
             NST_Total   : N32;
             NST_Rec_Out : N32;
+            Rand_OK     : Boolean;
          begin
             S.HC.Cfg.Get_Active_TEK.all (Key_ID_Buf, TEK_Buf, Have_TEK);
-            S.HC.Cfg.Random.all (Nonce_Buf);
+            Draw (Nonce_Buf, Rand_OK);
+            if not Rand_OK then
+               --  No nonce, no ticket, and the flight is aborted with the
+               --  reason.
+               S.Last_Error := Entropy_Failure;
+               Set_State (S, Error_State);
+               OK := False;
+               return;
+            end if;
 
             --  Ticket plaintext = master_secret + suite + creation
             --  time + sid_len=0 (we don't encode the SID in the

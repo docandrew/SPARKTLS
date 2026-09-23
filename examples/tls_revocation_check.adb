@@ -206,6 +206,9 @@ procedure TLS_Revocation_Check is
    end Rejected;
 
 begin
+   --  Randomness: SPARKEntropy behind SPARKTLS.RBG, started before the
+   --  first handshake.
+   Entropy_Random.Init;
    --  Parse arguments. --crl may repeat; each file is attached in order,
    --  which matters only for reporting (the store is searched by scope,
    --  not by position).
@@ -330,7 +333,6 @@ begin
       S := SPARKTLS.Client.Configure
         ((Server_Name         => SPARKTLS.To_Name (Hostname),
           Trust               => Roots'Unchecked_Access,
-          Random              => Entropy_Random.Random'Access,
           Get_Time            => Current_Time'Unrestricted_Access,
           Revocation          => Policy,
           Request_OCSP_Staple => Ask_Staple,

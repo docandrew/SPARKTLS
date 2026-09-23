@@ -13,6 +13,7 @@ with RFLX.RFLX_Builtin_Types;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 with Det_Random_Lib;
+with SPARKTLS.RBG;
 with SPARKTLS.Test_Support;
 
 procedure Test_Build_Server_Hello is
@@ -56,7 +57,7 @@ procedure Test_Build_Server_Hello is
    begin
       SPARKTLS.Test_Support.Reset (S);
       HC         := (others => <>);
-      HC.Cfg.Random       := Det_Random_Lib.Det_Random'Access;
+      Det_Random_Lib.Reset;
       HC.Client_Has_X25519 := True;
       HC.KE.Peer_PK := (others => 16#01#);  --  arbitrary peer pubkey
    end Init_Context;
@@ -123,10 +124,16 @@ procedure Test_Build_Server_Hello is
       Check ("X25519: legacy_version = 0x0303",
              Result (4) = 16#03# and Result (5) = 16#03#);
 
-      Check ("X25519: server_random matches deterministic source",
-             (for all I in 0 .. 31 =>
-                HC.Server_Random (N32 (I)) =
-                  Byte (16#A0# + (Natural (I) mod 16))));
+      --  The server random is the first draw after the generator was
+      --  reset from the deterministic source; replay it and compare.
+      declare
+         Expected : Byte_Seq (0 .. 31);
+      begin
+         Det_Random_Lib.Reset;
+         SPARKTLS.RBG.Random (Expected);
+         Check ("X25519: server_random is the generator's first draw",
+                (for all I in 0 .. 31 => HC.Server_Random (N32 (I)) = Expected (N32 (I))));
+      end;
 
       --  legacy_session_id_echo length at offset 38 (4 hdr + 2 ver + 32 rnd)
       Check ("X25519: session_id_echo_length is a single byte",
@@ -278,11 +285,13 @@ procedure Test_Build_Server_Hello is
       R2 : Byte_Seq (0 .. SPARKTLS.Handshake.TLS13.Max_Server_Hello - 1) := (others => 0);
       L1, L2 : N32;
    begin
-      Init_Context (S1, HC1);
-      Init_Context (S2, HC2);
+      --  Each build starts from a freshly reset generator (Init_Context),
+      --  so identical inputs draw identical randomness.
       --  Explicit suite: a fresh session has none (see the note above).
+      Init_Context (S1, HC1);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
         (Suite_AES_128_GCM_SHA256, HC1, Arena, R1, L1);
+      Init_Context (S2, HC2);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
         (Suite_AES_128_GCM_SHA256, HC2, Arena, R2, L2);
 

@@ -37,8 +37,7 @@ procedure Test_Validation_Config is
       S : Client_Session;
    begin
       S := SPARKTLS.Client.Configure
-        ((Random      => Det_Random_Lib.Det_Random'Access,
-          Get_Time    => Fixed_Now'Unrestricted_Access,
+        ((          Get_Time    => Fixed_Now'Unrestricted_Access,
           Trust       => null,
           Server_Name => To_Name ("example.com"),
           others      => <>));
@@ -51,7 +50,7 @@ procedure Test_Validation_Config is
       S   : Client_Session;
       Cfg : Config;
    begin
-      Cfg.Random := Det_Random_Lib.Det_Random'Access;
+      Det_Random_Lib.Reset;
       Cfg.Trust := Roots'Unchecked_Access;
       Cfg.Get_Time := null;
       Cfg.Skip_Verify := False;
@@ -66,7 +65,7 @@ procedure Test_Validation_Config is
       S   : Client_Session;
       Cfg : Config;
    begin
-      Cfg.Random := Det_Random_Lib.Det_Random'Access;
+      Det_Random_Lib.Reset;
       Cfg.Trust := null;
       Cfg.Get_Time := null;
       Cfg.Skip_Verify := True;
@@ -82,7 +81,6 @@ procedure Test_Validation_Config is
    begin
       S := SPARKTLS.Server.Configure
         ((Local               => Id'Unchecked_Access,
-          Random              => Det_Random_Lib.Det_Random'Access,
           Trust               => null,
           Request_Client_Cert => True,
           Require_Client_Cert => True,
@@ -98,7 +96,6 @@ procedure Test_Validation_Config is
    begin
       S := SPARKTLS.Server.Configure
         ((Local               => Id'Unchecked_Access,
-          Random              => Det_Random_Lib.Det_Random'Access,
           Trust               => Roots'Unchecked_Access,
           Request_Client_Cert => True,
           Require_Client_Cert => True,
@@ -114,7 +111,6 @@ procedure Test_Validation_Config is
    begin
       S := SPARKTLS.Server.Configure
         ((Local               => Id'Unchecked_Access,
-          Random              => Det_Random_Lib.Det_Random'Access,
           Trust               => null,
           Request_Client_Cert => False,
           Require_Client_Cert => False,

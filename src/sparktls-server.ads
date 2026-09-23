@@ -155,7 +155,7 @@ is
    --  the active key only.
    --
    --  ROTATION IS AUTOMATIC BY DEFAULT, not caller-driven. Once the app
-   --  calls Ticket_Keys.Initialize (Random, Clock, Rotation_Interval)
+   --  calls Ticket_Keys.Initialize (Clock, Rotation_Interval)
    --  the cache rotates lazily every Rotation_Interval seconds (24 h
    --  default): Get_Active_TEK checks the active key's age on each ticket
    --  issuance and rotates in place, generating fresh material from the
@@ -185,12 +185,11 @@ private
    --  Server_Config_Can_Start
    --
    --  A server config that can actually run a handshake:
-   --  Identity must be present, RNG must be present, trust store and clock
+   --  Identity must be present, trust store and clock
    --  must be present if certificate checking is enabled.
    ----------------------------------------------------------------------------
    function Server_Config_Can_Start (Cfg : Config) return Boolean
-   is (not Is_Sentinel_Random (Cfg.Random)
-       and then Cfg.Local.Has_Identity
+   is (Cfg.Local.Has_Identity
        and then
          (not Cfg.Request_Client_Cert
           or else Cfg.Skip_Verify

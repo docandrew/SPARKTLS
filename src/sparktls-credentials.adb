@@ -65,16 +65,15 @@ is
      (Id       : out Identity;
       Cert_PEM : String;
       Key_PEM  : String;
-      Random   : Live_Random_Fn;
       OK       : out Boolean) is
    begin
-      Parsing.Load_Identity_PEM (Id, Cert_PEM, Key_PEM, Random, OK);
+      Parsing.Load_Identity_PEM (Id, Cert_PEM, Key_PEM, OK);
    end Load_Identity_PEM;
 
    procedure Load_Identity_Public_PEM
      (Id : out Identity; Cert_PEM : String; OK : out Boolean) is
    begin
-      Parsing.Load_Identity_PEM (Id, Cert_PEM, "", null, OK, Public_Only => True);
+      Parsing.Load_Identity_PEM (Id, Cert_PEM, "", OK, Public_Only => True);
    end Load_Identity_Public_PEM;
 
    procedure Load_Identity_Public
@@ -95,7 +94,6 @@ is
      (Id        : out Identity;
       Cert_Path : String;
       Key_Path  : String;
-      Random    : Live_Random_Fn;
       OK        : out Boolean)
    is
       Cert_Text : constant String := Read_File (Cert_Path);
@@ -108,7 +106,7 @@ is
          return;
       end if;
 
-      Load_Identity_PEM (Id, Cert_Text, Key_Text, Random, OK);
+      Load_Identity_PEM (Id, Cert_Text, Key_Text, OK);
    end Load_Identity;
 
    --  Load_Trust_Store: file I/O + PEM decode + per-cert Add_Root.

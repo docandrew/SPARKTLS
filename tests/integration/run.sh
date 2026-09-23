@@ -243,6 +243,28 @@ else
     echo "    $(echo "$output" | grep -i "error\|alert" | head -1)"
 fi
 
+# The examples draw their randomness from SPARKEntropy (CPU jitter) behind
+# SPARKTLS.RBG (HMAC_DRBG), examples/entropy_random.adb; no OS randomness.
+# This case checks the start-up line proves that path was taken:
+# jitter start-up test, DRBG self-test and seeding, a full TLS 1.3
+# handshake, ticket keys.
+echo "--- TLS 1.3: OpenSSL client → SPARKTLS server on SPARKEntropy + SPARKTLS.RBG ---"
+cleanup
+server_log=$(mktemp)
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" >"$server_log" 2>&1 &
+sleep 1
+output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 -quiet 2>&1 || true)
+cleanup
+if grep -q "Entropy: SPARKEntropy jitter source" "$server_log" \
+   && echo "$output" | grep -qi "hello\|verify return"; then
+    pass "Server on SPARKEntropy + SPARKTLS.RBG"
+else
+    fail "Server on SPARKEntropy + SPARKTLS.RBG"
+    echo "    server: $(grep -i "entropy" "$server_log" | head -1)"
+    echo "    client: $(echo "$output" | grep -i "error\|alert" | head -1)"
+fi
+rm -f "$server_log"
+
 echo ""
 
 # ===================================================================

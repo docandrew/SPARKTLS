@@ -52,7 +52,6 @@ is
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
-      Random          : in Live_Random_Fn;
       Sign            : in Sign_Fn;
       Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
@@ -145,12 +144,10 @@ is
    with
      Pre =>
        Result'First = 0
-       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
-       and then HC.Cfg.Random /= null,
+       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1,
      Post =>
        Len <= N32 (Result'Length)
        and then (if Len > 0 then Len >= 4)
-       and then HC.Cfg.Random /= null
        and then
          (if SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local))

@@ -165,7 +165,7 @@ begin
 
    SPARKTLS.Credentials.Load_Identity
      (Id, Ada.Command_Line.Argument (1),
-      Ada.Command_Line.Argument (2), Entropy_Random.Random'Access, Id_OK);
+      Ada.Command_Line.Argument (2), Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load certificate/key");
       return;
@@ -175,8 +175,7 @@ begin
    --  fine for a short-lived benchmark process; a long-running server should
    --  pass Clock so keys rotate.
    SPARKTLS.Ticket_Keys.Initialize
-     (Random => Entropy_Random.Random'Access,
-      Clock  => null);
+     (      Clock  => null);
 
    Put_Line ("=== SPARKTLS Bench Server ===");
    Put_Line ("Listening on 0.0.0.0:" & Port'Image);
@@ -245,7 +244,6 @@ begin
                         Conns (Conn_Index (Slot)).S :=
                           SPARKTLS.Server.Configure
                             ((Local   => Id'Unchecked_Access,
-                              Random  => Entropy_Random.Random'Access,
                               Get_Active_TEK =>
                                 SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
                               Get_TEK_By_Id  =>

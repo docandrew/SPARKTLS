@@ -114,8 +114,13 @@ is
    --
    --  Until this is called there is no key, so no tickets are issued and
    --  clients simply perform full handshakes.
+   --
+   --  Key material comes from SPARKTLS.RBG, so RBG.Init must have run.
+   --  A draw that comes back empty (the generator has latched off)
+   --  installs or rotates no key.
    procedure Initialize
-     (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600);
+     (Clock             : Get_Time_Fn;
+      Rotation_Interval : Unsigned_32 := 24 * 3600);
 
    ----------------------------------------------------------------------
    --  Callbacks  pass these to Configure/Init via 'Access.

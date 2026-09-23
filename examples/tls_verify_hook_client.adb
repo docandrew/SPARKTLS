@@ -514,7 +514,7 @@ begin
          Have_Trust := True;
       end if;
       if Cert /= "" and Key /= "" then
-         SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
+         SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
          if not Id_OK then
             Err ("load identity failed: " & Cert);
             Ada.Command_Line.Set_Exit_Status
@@ -524,7 +524,7 @@ begin
          Have_Local := True;
       end if;
       if Alt_Cert /= "" and Alt_Key /= "" then
-         SPARKTLS.Credentials.Load_Identity (Alt_Id, Alt_Cert, Alt_Key, Entropy_Random.Random'Access, Id_OK);
+         SPARKTLS.Credentials.Load_Identity (Alt_Id, Alt_Cert, Alt_Key, Id_OK);
          if not Id_OK then
             Err ("load alternate identity failed: " & Alt_Cert);
             Ada.Command_Line.Set_Exit_Status
@@ -542,7 +542,6 @@ begin
      ((Server_Name            => SPARKTLS.To_Name (Cfg_Host (1 .. Cfg_Host_Len)),
        Trust                  =>
           (if Have_Trust then Roots'Unchecked_Access else null),
-       Random                 => Entropy_Random.Random'Access,
        Get_Time               => Current_Time'Unrestricted_Access,
        Local                  =>
           (if Have_Local then Id'Unchecked_Access

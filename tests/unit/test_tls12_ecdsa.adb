@@ -1,4 +1,5 @@
 with SPARKTLS.HS_Pool;
+with Det_Random_Lib;
 with Ada.Command_Line;
 with Ada.Text_IO; use Ada.Text_IO;
 
@@ -139,7 +140,7 @@ procedure Test_TLS12_ECDSA is
       P       : N32;
    begin
       SPARKTLS.Cert_Verify.Set_Identity
-        (Id, X509.Byte_Seq (Chain_Leaf_DER), Chain_Leaf_Key, Test_Random'Unrestricted_Access, Id_OK);
+        (Id, X509.Byte_Seq (Chain_Leaf_DER), Chain_Leaf_Key, Id_OK);
       Check ("TLS 1.2 chain test identity loads", Id_OK);
       if not Id_OK then
          return;
@@ -188,6 +189,7 @@ procedure Test_TLS12_ECDSA is
       Check ("TLS 1.2 cert entries consume full message", P = Len);
    end Test_TLS12_Certificate_Chain_Emits_Intermediates;
 begin
+   Det_Random_Lib.Reset;   --  start SPARKTLS.RBG from the deterministic test source
    X509.Parse (X509.Byte_Seq (Cert_DER), Cert, OK);
    Check ("BoGo P-256 cert parses", OK);
 

@@ -226,7 +226,7 @@ procedure Test_Parse_Client_Hello is
    begin
       SPARKTLS.Test_Support.Reset (S);
       HC := (others => <>);
-      HC.Cfg.Random := Det_Random_Lib.Det_Random'Access;
+      Det_Random_Lib.Reset;
       HC.Cfg.Local := Test_Identity'Unchecked_Access;
    end Init_Context;
 

@@ -414,7 +414,6 @@ begin
           Trust       => (if Insecure or not Roots_OK
                           then null
                           else Roots'Unchecked_Access),
-          Random      => Entropy_Random.Random'Access,
           Get_Time    => Current_Time'Unrestricted_Access,
           Verify_Mode => (if Use_RFC5280
                           then SPARKTLS.Mode_RFC5280

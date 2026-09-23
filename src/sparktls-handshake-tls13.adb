@@ -111,16 +111,16 @@ is
        and then HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
        and then HC.Server_Random = HC.Server_Random'Old
    is
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
       PK_Bytes  : Bytes_32;
       Basepoint : constant Bytes_32 := (9, others => 0);
       Tmp_SK    : Bytes_32;
+      Rand_OK   : Boolean;
    begin
       KS_Raw := (others => 0);
 
-      Gen_Random (Byte_Seq (Tmp_SK));
-      if All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
-         HC.Ext_Parse_Err := Internal_Error;
+      Draw (Byte_Seq (Tmp_SK), Rand_OK);
+      if not Rand_OK then
+         HC.Ext_Parse_Err := Entropy_Failure;
          KS_Raw_Len := 0;
          OK := False;
          return;
@@ -179,28 +179,33 @@ is
        and then HC.Server_Random = HC.Server_Random'Old
    is
       use SPARKTLSCrypto.P256.Point;
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
       PK_Jac  : P256_Jacobian;
       PK_Enc  : Byte_Seq (0 .. 64);
       Peer_Pt : P256_Jacobian;
       Valid   : SPARKNaCl.U32;
       Tmp_SK  : Bytes_32;
-      Blind_G : Byte_Seq (0 .. 39);   --  SR-62, generator multiplication
-      Blind_P : Byte_Seq (0 .. 39);   --  SR-62, peer-point multiplication
+      Blind_G : Byte_Seq (0 .. 39) := (others => 0);   --  SR-62, generator multiplication
+      Blind_P : Byte_Seq (0 .. 39) := (others => 0);   --  SR-62, peer-point multiplication
+      Rand_OK : Boolean;
    begin
       KS_Raw := (others => 0);
       KS_Raw_Len := 0;
       OK := False;
 
-      Gen_Random (Byte_Seq (Tmp_SK));
-      if All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
-         HC.Ext_Parse_Err := Internal_Error;
+      Draw (Byte_Seq (Tmp_SK), Rand_OK);
+      if Rand_OK then
+         Draw (Blind_G, Rand_OK);
+      end if;
+      if Rand_OK then
+         Draw (Blind_P, Rand_OK);
+      end if;
+      if not Rand_OK then
+         Sanitize (Tmp_SK);
+         HC.Ext_Parse_Err := Entropy_Failure;
          return;
       end if;
       HC.KE.P256_SK := Tmp_SK;
       Sanitize (Tmp_SK);
-      Gen_Random (Blind_G);
-      Gen_Random (Blind_P);
       --  Our public key
       P256_Mulgen_Blinded (PK_Jac, HC.KE.P256_SK, Blind_G);
       Sanitize (Blind_G);
@@ -262,27 +267,32 @@ is
        and then HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
        and then HC.Server_Random = HC.Server_Random'Old
    is
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
       PK_Enc  : Byte_Seq (0 .. 96);
       SS      : Bytes_48;
       SS_OK   : Boolean;
       Tmp_SK  : Bytes_48;
-      Blind_G : Byte_Seq (0 .. 55);   --  generator multiplication
-      Blind_P : Byte_Seq (0 .. 55);   --  peer-point multiplication
+      Blind_G : Byte_Seq (0 .. 55) := (others => 0);   --  generator multiplication
+      Blind_P : Byte_Seq (0 .. 55) := (others => 0);   --  peer-point multiplication
+      Rand_OK : Boolean;
    begin
       KS_Raw := (others => 0);
       KS_Raw_Len := 0;
       OK := False;
 
-      Gen_Random (Byte_Seq (Tmp_SK));
-      if All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
-         HC.Ext_Parse_Err := Internal_Error;
+      Draw (Byte_Seq (Tmp_SK), Rand_OK);
+      if Rand_OK then
+         Draw (Blind_G, Rand_OK);
+      end if;
+      if Rand_OK then
+         Draw (Blind_P, Rand_OK);
+      end if;
+      if not Rand_OK then
+         Sanitize (Tmp_SK);
+         HC.Ext_Parse_Err := Entropy_Failure;
          return;
       end if;
       HC.KE.P384_SK := Tmp_SK;
       Sanitize (Tmp_SK);
-      Gen_Random (Blind_G);
-      Gen_Random (Blind_P);
       SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, HC.KE.P384_SK, Blind_G);
       Sanitize (Blind_G);
       SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded
@@ -333,12 +343,12 @@ is
        and then HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
        and then HC.Server_Random = HC.Server_Random'Old
    is
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
       Basepoint : constant Bytes_32 := (9, others => 0);
       M         : Bytes_32;
+      Rand_OK   : Boolean;
       SS        : MLKEM.Bytes_32;
       CT        : MLKEM.ML_KEM_768.Ciphertext;
-      Tmp_SK    : Bytes_32;
+      Tmp_SK    : Bytes_32 := (others => 0);
       PK_Bytes  : Bytes_32;
    begin
       KS_Raw := (others => 0);
@@ -350,10 +360,14 @@ is
          return;
       end if;
       --  32 bytes of randomness for encapsulation, 32 for X25519
-      Gen_Random (Byte_Seq (M));
-      Gen_Random (Byte_Seq (Tmp_SK));
-      if All_Zero_Bytes (Byte_Seq (M)) or else All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
-         HC.Ext_Parse_Err := Internal_Error;
+      Draw (Byte_Seq (M), Rand_OK);
+      if Rand_OK then
+         Draw (Byte_Seq (Tmp_SK), Rand_OK);
+      end if;
+      if not Rand_OK then
+         Sanitize (M);
+         Sanitize (Tmp_SK);
+         HC.Ext_Parse_Err := Entropy_Failure;
          return;
       end if;
       HC.KE.Hybrid_SK := Tmp_SK;
@@ -637,7 +651,6 @@ is
       --  The build-side message type (extensions unconditional); Server_Hello
       --  is the parse type. Same wire layout.
       use RFLX.TLS_Handshake.Server_Hello_Ext;
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Generous buffer, as the ClientHello and HelloRetryRequest builders:
       --  the body is at most 40 + 32 + 1140 = 1212 bytes (X25519MLKEM768).
@@ -658,10 +671,15 @@ is
       --  Server random. RFC 8446 4.1.3 reserves the HelloRetryRequest
       --  sentinel, so regenerate on that astronomical collision.
       declare
-         Tmp_SR : Bytes_32;
+         Tmp_SR  : Bytes_32;
+         Rand_OK : Boolean;
       begin
          loop
-            Gen_Random (Byte_Seq (Tmp_SR));
+            Draw (Byte_Seq (Tmp_SR), Rand_OK);
+            if not Rand_OK then
+               HC.Ext_Parse_Err := Entropy_Failure;
+               return;
+            end if;
             exit when Tmp_SR /= HRR_Sentinel;
          end loop;
          HC.Server_Random := Tmp_SR;
@@ -1296,7 +1314,6 @@ is
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
-      Random          : in Live_Random_Fn;
       Sign            : in Sign_Fn;
       Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
@@ -1310,6 +1327,7 @@ is
       Sig     : Byte_Seq (0 .. 511) := (others => 0);
       Sig_Len : N32 := 0;
       Sig_OK  : Boolean;
+      Rand_OK : Boolean;
 
       Algo_Enum : RFLX.Tls_Parameters.TLS_SignatureScheme_Enum;
    begin
@@ -1369,8 +1387,8 @@ is
                --  fixed, constant-time candidate budget is exhausted.
                SPARKTLSCrypto.RFC6979.Derive_K_P256
                  (D => Bytes_32 (Id.ECDSA_P256_Key), H => Bytes_32 (H), K => K_Bytes, OK => K_OK);
-               if K_OK then
-                  Random.all (Blind);
+               Draw (Blind, Rand_OK);
+               if K_OK and Rand_OK then
                   SPARKTLSCrypto.P256.ECDSA.Sign
                     (Hash  => H,
                      D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
@@ -1383,6 +1401,8 @@ is
                      ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
                   end if;
                else
+                  R_Half := (others => 0);
+                  S_Half := (others => 0);
                   Sig_OK := False;
                end if;
                --  A leaked nonce is the private key; scrub it, the blind
@@ -1406,8 +1426,8 @@ is
                --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
                SPARKTLSCrypto.RFC6979.Derive_K_P384
                  (D => Bytes_48 (Id.ECDSA_P384_Key), H => Bytes_48 (H), K => K_Bytes, OK => K_OK);
-               if K_OK then
-                  Random.all (Blind);
+               Draw (Blind, Rand_OK);
+               if K_OK and Rand_OK then
                   SPARKTLSCrypto.P384.ECDSA.Sign
                     (Hash  => H,
                      D     => Byte_Seq (Id.ECDSA_P384_Key),
@@ -1420,6 +1440,8 @@ is
                      ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
                   end if;
                else
+                  R_Half := (others => 0);
+                  S_Half := (others => 0);
                   Sig_OK := False;
                end if;
                Sanitize (Byte_Seq (K_Bytes));
@@ -1433,10 +1455,14 @@ is
                use SPARKTLSCrypto.Hashing.SHA256;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_32;
-               Blind : Bytes_16;   --  SR-61
+               Blind : Bytes_16 := (others => 0);   --  SR-61
             begin
-               Random.all (Byte_Seq (Salt));
-               Random.all (Byte_Seq (Blind));
+               Draw (Byte_Seq (Salt), Rand_OK);
+               if Rand_OK then
+                  Draw (Byte_Seq (Blind), Rand_OK);
+               end if;
+               Sig_OK := False;
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 32,
@@ -1451,6 +1477,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
+               end if;
                Sanitize (Byte_Seq (Blind));
             end;
 
@@ -1459,10 +1486,14 @@ is
                use SPARKNaCl.Hashing.SHA384;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_48;
-               Blind : Bytes_16;   --  SR-61
+               Blind : Bytes_16 := (others => 0);   --  SR-61
             begin
-               Random.all (Byte_Seq (Salt));
-               Random.all (Byte_Seq (Blind));
+               Draw (Byte_Seq (Salt), Rand_OK);
+               if Rand_OK then
+                  Draw (Byte_Seq (Blind), Rand_OK);
+               end if;
+               Sig_OK := False;
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 48,
@@ -1477,6 +1508,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
+               end if;
                Sanitize (Byte_Seq (Blind));
             end;
 
@@ -1485,10 +1517,14 @@ is
                use SPARKNaCl.Hashing.SHA512;
                H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_64;
-               Blind : Bytes_16;   --  SR-61
+               Blind : Bytes_16 := (others => 0);   --  SR-61
             begin
-               Random.all (Byte_Seq (Salt));
-               Random.all (Byte_Seq (Blind));
+               Draw (Byte_Seq (Salt), Rand_OK);
+               if Rand_OK then
+                  Draw (Byte_Seq (Blind), Rand_OK);
+               end if;
+               Sig_OK := False;
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 64,
@@ -1503,6 +1539,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
+               end if;
                Sanitize (Byte_Seq (Blind));
             end;
 

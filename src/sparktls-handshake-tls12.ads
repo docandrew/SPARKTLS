@@ -224,7 +224,6 @@ is
    procedure Build_Server_Key_Exchange
      (HC     : in Handshake_Context;
       Id     : in Identity;
-      Random : in Live_Random_Fn;
       Sign   : in Sign_Fn;
       Result : out Byte_Seq;
       Len    : out N32)
@@ -266,11 +265,13 @@ is
    --    X25519: raw u-coordinate = 32 bytes
    --
    --  Wrapped in handshake header: type[1]=0x10 || length[3] || body
+   --  Len = 0 with Err saying why: Entropy_Failure when the blind draw
+   --  returned nothing, Internal_Error when no ECDHE group is negotiated.
    procedure Build_Client_Key_Exchange
-     (HC : in Handshake_Context; Result : out Byte_Seq; Len : out N32)
+     (HC : in Handshake_Context; Result : out Byte_Seq; Len : out N32; Err : out Error_Code)
    with
      Pre => Result'First = 0 and Result'Last >= Max_Client_Key_Exchange - 1,
-     Post => Len <= Max_Client_Key_Exchange;
+     Post => Len <= Max_Client_Key_Exchange and then (Len = 0) = (Err /= No_Error);
 
    --  RFC 8422 5.4: Parse ServerKeyExchange.
    --
@@ -366,7 +367,6 @@ is
      (Transcript_Hash : in Byte_Seq;
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
-      Random          : in Live_Random_Fn;
       Sign            : in Sign_Fn;
       Result          : out Byte_Seq;
       Len             : out N32)

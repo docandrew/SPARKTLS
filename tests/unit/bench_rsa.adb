@@ -50,8 +50,7 @@ begin
    S_It := Arg (3, 20);
    V_It := Arg (4, 500);
    SPARKTLS.Credentials.Load_Identity
-     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
-      Test_Random'Unrestricted_Access, OK);
+     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), OK);
    if not OK or else Id.Sign_Algo /= Sign_RSA_PSS then
       Put_Line ("not an RSA identity");
       return;
