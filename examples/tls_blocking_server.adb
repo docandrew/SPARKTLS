@@ -435,7 +435,7 @@ begin
    end if;
 
    SPARKTLS.Ticket_Keys.Initialize
-     (      Clock             => Now_UTC'Unrestricted_Access,
+     (Clock             => Now_UTC'Unrestricted_Access,
       Rotation_Interval => Get_TEK_Rotate_Secs);
 
    if Ada.Command_Line.Argument_Count < 2 then

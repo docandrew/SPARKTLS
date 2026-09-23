@@ -174,8 +174,7 @@ begin
    --  Seed ticket storage. No clock is wired here, so rotation stays off --
    --  fine for a short-lived benchmark process; a long-running server should
    --  pass Clock so keys rotate.
-   SPARKTLS.Ticket_Keys.Initialize
-     (      Clock  => null);
+   SPARKTLS.Ticket_Keys.Initialize (Clock => null);
 
    Put_Line ("=== SPARKTLS Bench Server ===");
    Put_Line ("Listening on 0.0.0.0:" & Port'Image);

@@ -37,7 +37,7 @@ procedure Test_Validation_Config is
       S : Client_Session;
    begin
       S := SPARKTLS.Client.Configure
-        ((          Get_Time    => Fixed_Now'Unrestricted_Access,
+        ((Get_Time    => Fixed_Now'Unrestricted_Access,
           Trust       => null,
           Server_Name => To_Name ("example.com"),
           others      => <>));
