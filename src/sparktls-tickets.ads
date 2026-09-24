@@ -30,7 +30,7 @@
 --  AES-CBC + HMAC-SHA-256 example. The Key_ID is included as AAD so a
 --  ticket encrypted under key A can't be replayed against key B (defence
 --  in depth against TEK confusion). The 12-byte nonce is drawn from
---  Cfg.Random per ticket; with random nonces a single TEK must not seal
+--  SPARKTLS.RBG per ticket; with random nonces a single TEK must not seal
 --  more than about 2**32 tickets (NIST SP 800-38D), one more reason the
 --  key ring rotates daily by default.
 

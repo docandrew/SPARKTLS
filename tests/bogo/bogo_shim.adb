@@ -340,6 +340,7 @@ procedure Bogo_Shim is
          when Missing_Extension        => return "Missing_Extension";
          when No_Application_Protocol  => return "No_Application_Protocol";
          when Internal_Error           => return "Internal_Error";
+         when Entropy_Failure          => return "Entropy_Failure";
          when Insufficient_Buffer      => return "Insufficient_Buffer";
          when Bad_Configuration        => return "Bad_Configuration";
          when No_Free_Sessions         => return "No_Free_Sessions";
@@ -1239,8 +1240,7 @@ procedure Bogo_Shim is
             OK : Boolean;
          begin
             SPARKTLS.Credentials.Load_Identity
-              (Creds (I).Id, Trim_Path (Creds (I).Cert_File), Trim_Path (Creds (I).Key_File),
-               Entropy_Random.Random'Access, OK);
+              (Creds (I).Id, Trim_Path (Creds (I).Cert_File), Trim_Path (Creds (I).Key_File), OK);
             if not OK then
                Err ("bogo_shim: load credential" & Integer'Image (I) & " failed");
                return False;
@@ -1392,6 +1392,36 @@ procedure Bogo_Shim is
 
       Roots   : aliased SPARKTLS.Trust_Store;
       Roots_OK : Boolean;
+
+      --  Orderly close after a fatal alert has been queued and sent. The
+      --  runner's scripted flight may still be in our receive queue; a
+      --  plain close (process exit) with unread input makes the kernel
+      --  send RST, and an RST can discard our alert on the peer's side
+      --  before it is read -- which is what turned
+      --  AppDataBeforeTLS13KeyChange-Empty into an under-load flake
+      --  (2026-09-22, expectedLocalError "remote error: bad record MAC"
+      --  not observed). Half-close the write side so the alert is
+      --  followed by FIN in order, then read and discard until the peer
+      --  closes, bounded by a receive timeout so a silent peer cannot
+      --  hang the shim. Deterministic, no timing guess.
+      procedure Graceful_Close is
+         SE   : Stream_Element_Array (1 .. 4096);
+         Last : Stream_Element_Offset;
+      begin
+         begin
+            GNAT.Sockets.Shutdown_Socket (Sock, Shut_Write);
+         exception
+            when Socket_Error => return;   --  already gone
+         end;
+         GNAT.Sockets.Set_Socket_Option
+           (Sock, Socket_Level, (Receive_Timeout, Timeout => 2.0));
+         loop
+            GNAT.Sockets.Receive_Socket (Sock, SE, Last);
+            exit when Last < SE'First;   --  peer closed
+         end loop;
+      exception
+         when Socket_Error => null;      --  timeout or reset: nothing more to do
+      end Graceful_Close;
 
       procedure Send_Pending is
          N    : N32;
@@ -1635,7 +1665,7 @@ procedure Bogo_Shim is
             Trust : constant String := Trim_Path (Cfg.Trust_Cert);
          begin
             if Cert /= "" and then Key /= "" then
-               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
+               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
             else
                --  Only credential blocks: no default identity.
                Id := SPARKTLS.No_Identity;
@@ -1707,7 +1737,6 @@ procedure Bogo_Shim is
                    else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
                Server_Cfg : SPARKTLS.Config;
             begin
-               Server_Cfg.Random := Entropy_Random.Random'Access;
                --  Config.Local is the default, tried after the identity set;
                --  with credential blocks only, the first block stands in so
                --  the configuration is complete (selection still runs the
@@ -1794,7 +1823,7 @@ procedure Bogo_Shim is
             end if;
             if Cert /= "" and Key /= "" then
                --  mTLS: client cert + key for CertificateRequest reply.
-               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Entropy_Random.Random'Access, Id_OK);
+               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
                if not Id_OK then
                   Err ("bogo_shim: load client identity failed");
                   Ada.Command_Line.Set_Exit_Status
@@ -1811,7 +1840,6 @@ procedure Bogo_Shim is
                    else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
                Client_Cfg : SPARKTLS.Config;
             begin
-               Client_Cfg.Random := Entropy_Random.Random'Access;
                Client_Cfg.Get_Time := Current_Time'Unrestricted_Access;
                Client_Cfg.Verify_Mode := Mode_RFC5280;
                Client_Cfg.Versions := Policy;
@@ -1888,7 +1916,7 @@ procedure Bogo_Shim is
             when Has_Output =>
                Send_Pending;
                if State (S) = Error_State then
-                  delay 0.05;
+                  Graceful_Close;
                   Ada.Command_Line.Set_Exit_Status
                     (Ada.Command_Line.Exit_Status
                        (if Cfg.Expect_Hs_Fails then Exit_Success else Exit_Failure));
@@ -1920,12 +1948,10 @@ procedure Bogo_Shim is
             when Error_Alert =>
                Err_State ("bogo_shim: handshake error", S);
                Send_Pending;
-               --  BoGo malformed-message tests often expect the runner
-               --  side to observe the fatal alert while it is still writing
-               --  the remainder of its scripted flight. Give the TCP peer a
-               --  short chance to read the alert before process exit closes
-               --  the socket.
-               delay 0.05;
+               --  BoGo malformed-message tests expect the runner side to
+               --  observe the fatal alert while it is still writing the
+               --  remainder of its scripted flight; deliver it in order.
+               Graceful_Close;
                Ada.Command_Line.Set_Exit_Status
                  (Ada.Command_Line.Exit_Status
                     (if Cfg.Expect_Hs_Fails then Exit_Success else Exit_Failure));
@@ -2260,6 +2286,7 @@ procedure Bogo_Shim is
             when Error_Alert =>
                Err_State ("bogo_shim: application error", S);
                Send_Pending;
+               Graceful_Close;
                Ada.Command_Line.Set_Exit_Status
                  (Ada.Command_Line.Exit_Status (Exit_Failure));
                Run_Failed := True;

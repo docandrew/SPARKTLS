@@ -3,6 +3,7 @@
 --  public key, and survive corrupted CRT parameters by falling back.
 --  Usage: test_rsa_crt <cert.pem> <key.pem>
 
+with Det_Random_Lib;
 with Ada.Command_Line;
 with Ada.Text_IO;   use Ada.Text_IO;
 with Interfaces;    use Interfaces;
@@ -44,14 +45,14 @@ procedure Test_RSA_CRT is
    Id : SPARKTLS.Identity;
    OK : Boolean;
 begin
+   Det_Random_Lib.Reset;   --  start SPARKTLS.RBG from the deterministic test source
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("usage: test_rsa_crt <cert.pem> <key.pem>");
       Ada.Command_Line.Set_Exit_Status (2);
       return;
    end if;
    SPARKTLS.Credentials.Load_Identity
-     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
-      Test_Random'Unrestricted_Access, OK);
+     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), OK);
    Check ("identity loads", OK and then Id.Sign_Algo = Sign_RSA_PSS);
    if not OK then
       Put_Line ("Total:" & Total'Image & " Pass:" & Pass'Image & " Fail:" & Fail'Image);

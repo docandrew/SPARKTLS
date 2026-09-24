@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Clone the sibling crates that alire.toml pins by relative path.
 #
-# Why this exists: sparktls's alire.toml pins sparkx509 and sparktlscrypto
-# (and the CLI pins sparkentropy) with `path='../<name>'`; sparknacl comes
+# Why this exists: sparktls's alire.toml pins sparkx509, sparktlscrypto,
+# sparkmlkem and sparkentropy with `path='../<name>'`; sparknacl comes
 # from the Alire index. That is deliberate — it lets local
 # development edit the crates side by side and have sparktls pick the changes
 # up immediately. But CI checks out only sparktls, so those paths dangle and
@@ -30,14 +30,12 @@ SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
 SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-a499c75d90cc6e84320a502f803c796af624573e}"   # master 2026-09-21, P-384 blinding, RSA CRT/public primitives exposed, X25519 scrub, stack-residue scanner gate
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-b89c8bee8013498ac9008f92f4fd5480740e60df}"   # master 2026-09-23, SP 800-90A HMAC_DRBG with start-up self-test and CAVP KAT lane (PR #12)
 
 
 # ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).
-# TODO(pin): replace with the first pushed commit of docandrew/sparkmlkem;
-# CI cannot pass until it is.
 SPARKMLKEM_URL="https://github.com/docandrew/sparkmlkem.git"
-SPARKMLKEM_REF="${SPARKMLKEM_REF:-429bdd71de0ce3bc14db46ef3fc6d755bd340569}"   # master 2026-09-19, initial import
+SPARKMLKEM_REF="${SPARKMLKEM_REF:-5fbd0c9ae7a498f4bd5350547ebaffba381156fa}"   # master 2026-09-21, stack-residue scanner gate (PR #1)
 
 #  SPARK PIV client + Linux usbfs CCID transport; the examples project
 #  (tls_yubikey_server, piv_signer) withs sparkpiv_linux.gpr. Library code
@@ -49,7 +47,7 @@ SPARKPIV_REF="${SPARKPIV_REF:-bf2c38662aafa02ff6b358f43606038b23f82457}"   # mai
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
 # integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
 SPARKENTROPY_URL="https://github.com/docandrew/sparkentropy.git"
-SPARKENTROPY_REF="${SPARKENTROPY_REF:-4516f8ad5de3dc85af7bbcb69b7a3337cc1b3fab}"   # main 2026-09-21, health-test failure latches the generator off (PR #1)
+SPARKENTROPY_REF="${SPARKENTROPY_REF:-f707e61678576b4748c040d645b8ed427a28f8c8}"   # main 2026-09-23, intermittent/permanent health-test tiers, OSR accessors (PR #2)
 
 clone_at() {
     local url="$1" ref="$2" dir="$3"

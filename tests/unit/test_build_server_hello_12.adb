@@ -47,7 +47,7 @@ procedure Test_Build_Server_Hello_12 is
       ALPN   : Hostname_Buf;
       Result : Byte_Seq (0 .. 511) := (others => 0);
    begin
-      HC.Cfg.Random          := Det_Random_Lib.Det_Random'Access;
+      Det_Random_Lib.Reset;
       HC.Cfg.Local           := Id'Unchecked_Access;
       HC.Cfg.Ack_Server_Name := Ack;
       HC.Peer_SNI.Len        := 9;

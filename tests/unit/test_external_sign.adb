@@ -3,6 +3,7 @@
 --  builder with a P-256 key (the YubiKey case).
 --
 --  Usage: test_external_sign <p256.crt> <p256.key> [<rsa.crt> <rsa.key>]
+with Det_Random_Lib;
 with Ada.Command_Line;
 with Ada.Text_IO;   use Ada.Text_IO;
 with Interfaces;    use Interfaces;
@@ -139,14 +140,14 @@ procedure Test_External_Sign is
    CV    : Byte_Seq (0 .. 523);
    CV_Len : N32;
 begin
+   Det_Random_Lib.Reset;   --  start SPARKTLS.RBG from the deterministic test source
    if Ada.Command_Line.Argument_Count not in 2 | 4 then
       Put_Line ("usage: test_external_sign <p256.crt> <p256.key>");
       Ada.Command_Line.Set_Exit_Status (1);
       return;
    end if;
    Credentials.Load_Identity
-     (Key_Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
-      Fixed_Random'Unrestricted_Access, Id_OK);
+     (Key_Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), Id_OK);
    Check ("private identity loads", Id_OK and then Key_Id.Has_Private_Key);
    Credentials.Load_Identity_Public (Pub_Id, Ada.Command_Line.Argument (1), Pub_OK);
    Check ("public-only identity loads", Pub_OK);
@@ -159,7 +160,7 @@ begin
    --  1. Public-only identity and no callback: must fail closed.
    Handshake.TLS13.Build_Certificate_Verify
      (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-      Role => Role_Server, Random => Fixed_Random'Unrestricted_Access, Sign => null,
+      Role => Role_Server, Sign => null,
       Arena_Storage => Arena, Result => CV, Len => CV_Len);
    Check ("no key and no callback: CertificateVerify refused", CV_Len = 0);
 
@@ -168,8 +169,7 @@ begin
    Mode := 0;
    Handshake.TLS13.Build_Certificate_Verify
      (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-      Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
-      Sign => P256_Sign'Unrestricted_Access,
+      Role => Role_Server, Sign => P256_Sign'Unrestricted_Access,
       Arena_Storage => Arena, Result => CV, Len => CV_Len);
    Check ("external signer: CertificateVerify built", CV_Len > 8);
    if CV_Len > 8 then
@@ -209,7 +209,7 @@ begin
    begin
       Handshake.TLS13.Build_Certificate_Verify
         (Transcript_Hash => TH, Id => Key_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-         Role => Role_Server, Random => Fixed_Random'Unrestricted_Access, Sign => null,
+         Role => Role_Server, Sign => null,
          Arena_Storage => Arena, Result => CV2, Len => L2);
       Check ("local and external CertificateVerify are byte-identical",
              L2 = CV_Len and then L2 > 0 and then CV2 (0 .. L2 - 1) = CV (0 .. CV_Len - 1));
@@ -219,8 +219,7 @@ begin
    Mode := 1;
    Handshake.TLS13.Build_Certificate_Verify
      (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-      Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
-      Sign => P256_Sign'Unrestricted_Access,
+      Role => Role_Server, Sign => P256_Sign'Unrestricted_Access,
       Arena_Storage => Arena, Result => CV, Len => CV_Len);
    Check ("corrupt signature from the signer is rejected before the wire", CV_Len = 0);
 
@@ -228,8 +227,7 @@ begin
    Mode := 2;
    Handshake.TLS13.Build_Certificate_Verify
      (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-      Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
-      Sign => P256_Sign'Unrestricted_Access,
+      Role => Role_Server, Sign => P256_Sign'Unrestricted_Access,
       Arena_Storage => Arena, Result => CV, Len => CV_Len);
    Check ("signer failure: CertificateVerify refused", CV_Len = 0);
 
@@ -237,8 +235,7 @@ begin
    Mode := 3;
    Handshake.TLS13.Build_Certificate_Verify
      (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-      Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
-      Sign => P256_Sign'Unrestricted_Access,
+      Role => Role_Server, Sign => P256_Sign'Unrestricted_Access,
       Arena_Storage => Arena, Result => CV, Len => CV_Len);
    Check ("signer status Pending: CertificateVerify refused", CV_Len = 0);
 
@@ -253,32 +250,27 @@ begin
    begin
       Mode := 0;
       Handshake.TLS12.Build_Certificate_Verify_12
-        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,Sign => P256_Sign'Unrestricted_Access,
          Result => CV12, Len => L12);
       Check ("1.2 CV external (digest only): built", L12 > 8);
       Handshake.TLS12.Build_Certificate_Verify_12
-        (Transcript_Hash => TH, Id => Key_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-         Random => Fixed_Random'Unrestricted_Access, Sign => null,
+        (Transcript_Hash => TH, Id => Key_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,Sign => null,
          Result => CV12b, Len => L12b);
       Check ("1.2 CV local and external byte-identical",
              L12 = L12b and then L12 > 0 and then CV12 (0 .. L12 - 1) = CV12b (0 .. L12b - 1));
       Mode := 1;
       Handshake.TLS12.Build_Certificate_Verify_12
-        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,Sign => P256_Sign'Unrestricted_Access,
          Result => CV12, Len => L12);
       Check ("1.2 CV external: corrupt signature rejected before the wire", L12 = 0);
       Mode := 2;
       Handshake.TLS12.Build_Certificate_Verify_12
-        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,
-         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_ECDSA_P256_SHA256,Sign => P256_Sign'Unrestricted_Access,
          Result => CV12, Len => L12);
       Check ("1.2 CV external: signer failure refused", L12 = 0);
       Mode := 0;
       Handshake.TLS12.Build_Certificate_Verify_12
-        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_Ed25519,
-         Random => Fixed_Random'Unrestricted_Access, Sign => P256_Sign'Unrestricted_Access,
+        (Transcript_Hash => TH, Id => Pub_Id, Sig_Algo_Wire => Sig_Ed25519,Sign => P256_Sign'Unrestricted_Access,
          Result => CV12, Len => L12);
       Check ("1.2 CV external: Ed25519 refused (no message available)", L12 = 0);
    end;
@@ -293,32 +285,27 @@ begin
          CVr     : Byte_Seq (0 .. Handshake.TLS12.Max_Certificate_Verify_12 - 1);
          Lr      : N32;
       begin
-         Credentials.Load_Identity (RSA_Id, Ada.Command_Line.Argument (3), Ada.Command_Line.Argument (4),
-                                    Fixed_Random'Unrestricted_Access, RSA_OK);
+         Credentials.Load_Identity (RSA_Id, Ada.Command_Line.Argument (3), Ada.Command_Line.Argument (4), RSA_OK);
          Credentials.Load_Identity_Public (RSA_Pub, Ada.Command_Line.Argument (3), P_OK);
          Check ("RSA identities load (private + public-only)", RSA_OK and P_OK and RSA_Pub.Sign_Algo = Sign_RSA_PSS);
          Mode := 0;
          Handshake.TLS13.Build_Certificate_Verify
            (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PSS_SHA256,
-            Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
-            Sign => RSA_Sign'Unrestricted_Access, Arena_Storage => Arena, Result => CVr, Len => Lr);
+            Role => Role_Server, Sign => RSA_Sign'Unrestricted_Access, Arena_Storage => Arena, Result => CVr, Len => Lr);
          Check ("1.3 CV external RSA-PSS: built and verified", Lr = 8 + RSA_Pub.RSA_Mod_Len);
          Mode := 1;
          Handshake.TLS13.Build_Certificate_Verify
            (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PSS_SHA256,
-            Role => Role_Server, Random => Fixed_Random'Unrestricted_Access,
-            Sign => RSA_Sign'Unrestricted_Access, Arena_Storage => Arena, Result => CVr, Len => Lr);
+            Role => Role_Server, Sign => RSA_Sign'Unrestricted_Access, Arena_Storage => Arena, Result => CVr, Len => Lr);
          Check ("1.3 CV external RSA-PSS: corrupt rejected", Lr = 0);
          Mode := 0;
          Handshake.TLS12.Build_Certificate_Verify_12
-           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PKCS1_SHA256,
-            Random => Fixed_Random'Unrestricted_Access, Sign => RSA_Sign'Unrestricted_Access,
+           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PKCS1_SHA256,Sign => RSA_Sign'Unrestricted_Access,
             Result => CVr, Len => Lr);
          Check ("1.2 CV external RSA PKCS#1: built and verified", Lr > 8);
          Mode := 1;
          Handshake.TLS12.Build_Certificate_Verify_12
-           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PKCS1_SHA256,
-            Random => Fixed_Random'Unrestricted_Access, Sign => RSA_Sign'Unrestricted_Access,
+           (Transcript_Hash => TH, Id => RSA_Pub, Sig_Algo_Wire => Sig_RSA_PKCS1_SHA256,Sign => RSA_Sign'Unrestricted_Access,
             Result => CVr, Len => Lr);
          Check ("1.2 CV external RSA PKCS#1: corrupt rejected", Lr = 0);
          Mode := 0;

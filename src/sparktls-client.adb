@@ -76,11 +76,11 @@ is
    --  full handshake it fails closed at the same runtime guard.
    ----------------------------------------------------------------------------
    function Client_Config_Can_Start (Cfg : Config; Resume_Usable : Boolean) return Boolean
-   is (not Is_Sentinel_Random (Cfg.Random)
+   is (
        --  mTLS identity, if offered, must carry a certificate: the run-time
        --  enforcement of the Valid_Identity_Access predicate (mirrors the
        --  server's Configure check; predicates do not execute in shipped builds).
-       and then Identity_Valid (Cfg.Local.all)
+       Identity_Valid (Cfg.Local.all)
        and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
        and then (not Cfg.Resume_Ticket.Valid or else Cfg.Get_Time /= null)
        and then
@@ -205,7 +205,7 @@ is
 
       if CH_Len = 0 then
          Set_State (S, Error_State);
-         S.Last_Error := Internal_Error;
+         S.Last_Error := (if S.HC.Ext_Parse_Err = Entropy_Failure then Entropy_Failure else Internal_Error);
          return;
       end if;
 

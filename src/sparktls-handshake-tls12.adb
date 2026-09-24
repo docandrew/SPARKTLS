@@ -107,7 +107,6 @@ is
    --  input. OK is False on a malformed local identity or a failed sign.
    procedure Sign_SKE_RSA_PSS
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       Scheme  : in Maybe_Sig_Scheme;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
@@ -122,6 +121,7 @@ is
        and then Msg'Last < N32'Last - 128,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
    begin
       Sig := (others => 0);
       Sig_Len := 0;
@@ -143,11 +143,15 @@ is
          Salt64 : Bytes_64;
          Blind  : Bytes_16;   --  SR-61 exponent blinding
       begin
-         Random.all (Byte_Seq (Blind));
+         Draw (Byte_Seq (Blind), Rand_OK);
+         if not Rand_OK then
+            return;
+         end if;
          case Scheme is
             when Sig_RSA_PSS_SHA256 =>
                SPARKTLSCrypto.Hashing.SHA256.Hash (H256, Msg);
-               Random.all (Byte_Seq (Salt32));
+               Draw (Byte_Seq (Salt32), Rand_OK);
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H256),
                   Hash_Len  => 32,
@@ -162,10 +166,12 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => OK);
+               end if;
 
             when Sig_RSA_PSS_SHA384 =>
                SPARKNaCl.Hashing.SHA384.Hash (H384, Msg);
-               Random.all (Byte_Seq (Salt48));
+               Draw (Byte_Seq (Salt48), Rand_OK);
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H384),
                   Hash_Len  => 48,
@@ -180,11 +186,13 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => OK);
+               end if;
 
             when others =>
                --  0x0806
                SPARKNaCl.Hashing.SHA512.Hash (H512, Msg);
-               Random.all (Byte_Seq (Salt64));
+               Draw (Byte_Seq (Salt64), Rand_OK);
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H512),
                   Hash_Len  => 64,
@@ -199,6 +207,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => OK);
+               end if;
          end case;
          Sanitize (Byte_Seq (Blind));
       end;
@@ -208,7 +217,6 @@ is
    --  input (TLS 1.2 only; verify-side counterpart lives in Cert_Verify).
    procedure Sign_SKE_RSA_PKCS1
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       Scheme  : in Maybe_Sig_Scheme;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
@@ -222,6 +230,7 @@ is
        and then Msg'Last < N32'Last - 128,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
    begin
       Sig := (others => 0);
       Sig_Len := 0;
@@ -239,7 +248,10 @@ is
          H512  : SPARKNaCl.Hashing.SHA512.Digest;
          Blind : Bytes_16;   --  SR-61 exponent blinding
       begin
-         Random.all (Byte_Seq (Blind));
+         Draw (Byte_Seq (Blind), Rand_OK);
+         if not Rand_OK then
+            return;
+         end if;
          case Scheme is
             when Sig_RSA_PKCS1_SHA256 =>
                SPARKTLSCrypto.Hashing.SHA256.Hash (H256, Msg);
@@ -295,7 +307,6 @@ is
    --  deterministic nonce, DER-encoded (r,s).
    procedure Sign_SKE_ECDSA_P256
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -308,6 +319,7 @@ is
        and then Msg'Last < N32'Last - 128,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
       H              : constant SPARKTLSCrypto.Hashing.SHA256.Digest :=
         SPARKTLSCrypto.Hashing.SHA256.Hash (Msg);
       K_Bytes        : Bytes_32;
@@ -324,8 +336,8 @@ is
          H  => Bytes_32 (H),
          K  => K_Bytes,
          OK => K_OK);
-      if K_OK then
-         Random.all (Blind);
+      Draw (Blind, Rand_OK);
+      if K_OK and Rand_OK then
          SPARKTLSCrypto.P256.ECDSA.Sign
            (Hash  => H,
             D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
@@ -350,7 +362,6 @@ is
    --  deterministic nonce (HMAC-SHA-384 DRBG), DER-encoded (r,s).
    procedure Sign_SKE_ECDSA_P384
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -363,6 +374,7 @@ is
        and then Msg'Last < N32'Last - 128,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
       H       : constant SPARKNaCl.Hashing.SHA384.Digest := SPARKNaCl.Hashing.SHA384.Hash (Msg);
       K_Bytes : Bytes_48;
       K_OK    : Boolean;
@@ -379,8 +391,8 @@ is
          H  => Bytes_48 (H),
          K  => K_Bytes,
          OK => K_OK);
-      if K_OK then
-         Random.all (Blind);
+      Draw (Blind, Rand_OK);
+      if K_OK and Rand_OK then
          SPARKTLSCrypto.P384.ECDSA.Sign
            (Hash  => H,
             D     => Byte_Seq (Id.ECDSA_P384_Key),
@@ -467,7 +479,6 @@ is
    procedure Build_Server_Key_Exchange
      (HC     : in Handshake_Context;
       Id     : in Identity;
-      Random : in Live_Random_Fn;
       Sign   : in Sign_Fn;
       Result : out Byte_Seq;
       Len    : out N32)
@@ -515,9 +526,13 @@ is
       Len := 0;
 
       declare
-         Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+         Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+         Rand_OK : Boolean;
       begin
-         Random.all (Blind);
+         Draw (Blind, Rand_OK);
+         if not Rand_OK then
+            return;
+         end if;
          Fill_SKE_Params (HC.KE, Blind, Params, Params_Len);
          Sanitize (Blind);
       end;
@@ -565,12 +580,12 @@ is
          case HC.Negotiated_Sig_Algo is
             when Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
                Sign_SKE_RSA_PSS
-                 (Id, Random, HC.Negotiated_Sig_Algo,
+                 (Id, HC.Negotiated_Sig_Algo,
                   Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
             when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512 =>
                Sign_SKE_RSA_PKCS1
-                 (Id, Random, HC.Negotiated_Sig_Algo,
+                 (Id, HC.Negotiated_Sig_Algo,
                   Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
             when Sig_Ed25519 =>
@@ -594,12 +609,12 @@ is
             when Sig_ECDSA_P256_SHA256 =>
                --  ecdsa_secp256r1_sha256
                Sign_SKE_ECDSA_P256
-                 (Id, Random, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
+                 (Id, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
             when Sig_ECDSA_P384_SHA384 =>
                --  ecdsa_secp384r1_sha384
                Sign_SKE_ECDSA_P384
-                 (Id, Random, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
+                 (Id, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
             when others =>
                return;
@@ -669,12 +684,13 @@ is
    ------------------------------------------------------------------
 
    procedure Build_Client_Key_Exchange
-     (HC : in Handshake_Context; Result : out Byte_Seq; Len : out N32)
+     (HC : in Handshake_Context; Result : out Byte_Seq; Len : out N32; Err : out Error_Code)
    is
       Pt_Len : constant N32 := Point_Len_For_Group (HC.KE.Curve);
    begin
       Result := (others => 0);
       Len := 0;
+      Err := Internal_Error;
 
       if Pt_Len = 0 then
          return;
@@ -710,10 +726,16 @@ is
                PK_Enc : Byte_Seq (0 .. 64);
             begin
                declare
-                  Blind : Byte_Seq (0 .. 39);   --  SR-62
+                  Blind   : Byte_Seq (0 .. 39);   --  SR-62
+                  Rand_OK : Boolean;
                begin
-                  HC.Cfg.Random.all (Blind);
+                  Draw (Blind, Rand_OK);
+                  if not Rand_OK then
+                     Err := Entropy_Failure;
+                     return;   --  Len stays 0
+                  end if;
                   SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (PK_Jac, HC.KE.P256_SK, Blind);
+                  Sanitize (Blind);
                end;
                SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
                SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
@@ -722,10 +744,15 @@ is
 
          when Group_Secp384r1 =>
             declare
-               PK_Enc : Byte_Seq (0 .. 96);
-               Blind  : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+               PK_Enc  : Byte_Seq (0 .. 96);
+               Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+               Rand_OK : Boolean;
             begin
-               HC.Cfg.Random.all (Blind);
+               Draw (Blind, Rand_OK);
+               if not Rand_OK then
+                  Err := Entropy_Failure;
+                  return;   --  Len stays 0
+               end if;
                SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded (PK_Enc, HC.KE.P384_SK, Blind);
                Sanitize (Blind);
                Result (5 .. 5 + 96) := PK_Enc;
@@ -737,6 +764,7 @@ is
       end case;
 
       Len := 4 + 1 + Pt_Len;  --  header + point_len + point
+      Err := No_Error;
    end Build_Client_Key_Exchange;
 
    ------------------------------------------------------------------
@@ -1100,7 +1128,6 @@ is
    --  width follows the scheme; the identity guard fails closed.
    procedure Sign_CV12_RSA_PSS
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       Scheme  : in Maybe_Sig_Scheme;
       TH      : in Byte_Seq;
       Sig     : out Byte_Seq;
@@ -1117,6 +1144,7 @@ is
                  else TH'Last >= 31),
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
       Blind : Bytes_16;   --  SR-61 exponent blinding
    begin
       Sig := (others => 0);
@@ -1129,13 +1157,17 @@ is
       then
          return;
       end if;
-      Random.all (Byte_Seq (Blind));
+      Draw (Byte_Seq (Blind), Rand_OK);
+      if not Rand_OK then
+         return;
+      end if;
       case Scheme is
          when Sig_RSA_PSS_SHA256 =>
             declare
                Salt : Bytes_32;
             begin
-               Random.all (Byte_Seq (Salt));
+               Draw (Byte_Seq (Salt), Rand_OK);
+               if Rand_OK then
                SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => TH (TH'First .. TH'First + 31),
                   Hash_Len  => 32,
@@ -1150,6 +1182,7 @@ is
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
                   OK        => OK);
+               end if;
             end;
 
          when Sig_RSA_PSS_SHA384 =>
@@ -1159,7 +1192,8 @@ is
                declare
                   Salt : Bytes_48;
                begin
-                  Random.all (Byte_Seq (Salt));
+                  Draw (Byte_Seq (Salt), Rand_OK);
+                  if Rand_OK then
                   SPARKTLSCrypto.RSA.Sign_PSS
                     (M_Hash    => TH (TH'First .. TH'First + 47),
                      Hash_Len  => 48,
@@ -1174,6 +1208,7 @@ is
                      Signature => Sig,
                      Sig_Len   => Sig_Len,
                      OK        => OK);
+                  end if;
                end;
             end if;
 
@@ -1183,7 +1218,8 @@ is
                declare
                   Salt : Bytes_64;
                begin
-                  Random.all (Byte_Seq (Salt));
+                  Draw (Byte_Seq (Salt), Rand_OK);
+                  if Rand_OK then
                   SPARKTLSCrypto.RSA.Sign_PSS
                     (M_Hash    => TH (TH'First .. TH'First + 63),
                      Hash_Len  => 64,
@@ -1198,6 +1234,7 @@ is
                      Signature => Sig,
                      Sig_Len   => Sig_Len,
                      OK        => OK);
+                  end if;
                end;
             end if;
       end case;
@@ -1208,7 +1245,6 @@ is
    --  transcript hash. Width follows the scheme; guard fails closed.
    procedure Sign_CV12_RSA_PKCS1
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       Scheme  : in Maybe_Sig_Scheme;
       TH      : in Byte_Seq;
       Sig     : out Byte_Seq;
@@ -1223,6 +1259,7 @@ is
        and then TH'Last < N32'Last - 64,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
       H_Len : constant N32 :=
         (if Scheme = Sig_RSA_PKCS1_SHA256 then 32
          elsif Scheme = Sig_RSA_PKCS1_SHA384 then 48
@@ -1240,7 +1277,10 @@ is
       then
          return;
       end if;
-      Random.all (Byte_Seq (Blind));
+      Draw (Byte_Seq (Blind), Rand_OK);
+      if not Rand_OK then
+         return;
+      end if;
       SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
         (M_Hash    => TH (TH'First .. TH'First + H_Len - 1),
          Hash_Len  => H_Len,
@@ -1260,7 +1300,6 @@ is
    --  DER-encoded (r,s).
    procedure Sign_Hash_ECDSA_P256
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       H       : in Bytes_32;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -1272,6 +1311,7 @@ is
        and then Sig'Last < N32'Last,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
       K_Bytes        : Bytes_32;
       K_OK           : Boolean;
       R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
@@ -1283,8 +1323,8 @@ is
       --  RFC 6979 deterministic nonce.
       SPARKTLSCrypto.RFC6979.Derive_K_P256
         (D => Bytes_32 (Id.ECDSA_P256_Key), H => H, K => K_Bytes, OK => K_OK);
-      if K_OK then
-         Random.all (Blind);
+      Draw (Blind, Rand_OK);
+      if K_OK and Rand_OK then
          SPARKTLSCrypto.P256.ECDSA.Sign
            (Hash  => SPARKTLSCrypto.Hashing.SHA256.Digest (H),
             D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
@@ -1307,7 +1347,6 @@ is
    --  (HMAC-SHA-384 DRBG), DER-encoded (r,s).
    procedure Sign_Hash_ECDSA_P384
      (Id      : in Identity;
-      Random  : in Live_Random_Fn;
       H       : in Bytes_48;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -1319,6 +1358,7 @@ is
        and then Sig'Last < N32'Last,
      Post => (if OK then Sig_Len <= Max_Sig)
    is
+      Rand_OK : Boolean;
       K_Bytes : Bytes_48;
       K_OK    : Boolean;
       R_Half  : Byte_Seq (0 .. 47);
@@ -1331,8 +1371,8 @@ is
       --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
       SPARKTLSCrypto.RFC6979.Derive_K_P384
         (D => Bytes_48 (Id.ECDSA_P384_Key), H => H, K => K_Bytes, OK => K_OK);
-      if K_OK then
-         Random.all (Blind);
+      Draw (Blind, Rand_OK);
+      if K_OK and Rand_OK then
          SPARKTLSCrypto.P384.ECDSA.Sign
            (Hash  => SPARKNaCl.Hashing.SHA384.Digest (H),
             D     => Byte_Seq (Id.ECDSA_P384_Key),
@@ -1355,7 +1395,6 @@ is
      (Transcript_Hash : in Byte_Seq;
       Id              : in Identity;
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
-      Random          : in Live_Random_Fn;
       Sign            : in Sign_Fn;
       Result          : out Byte_Seq;
       Len             : out N32)
@@ -1415,10 +1454,10 @@ is
       case Sig_Algo_Wire is
          when Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
             Sign_CV12_RSA_PSS
-              (Id, Random, Sig_Algo_Wire, Transcript_Hash, Sig, Sig_Len, Sig_OK);
+              (Id, Sig_Algo_Wire, Transcript_Hash, Sig, Sig_Len, Sig_OK);
 
          when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512 =>
-            Sign_CV12_RSA_PKCS1 (Id, Random, Sig_Algo_Wire, Transcript_Hash, Sig, Sig_Len, Sig_OK);
+            Sign_CV12_RSA_PKCS1 (Id, Sig_Algo_Wire, Transcript_Hash, Sig, Sig_Len, Sig_OK);
 
          when Sig_ECDSA_P384_SHA384 =>
             --  ecdsa_secp384r1_sha384 (mTLS w/ P-384 key)
@@ -1426,7 +1465,7 @@ is
                return;
             end if;
             Sign_Hash_ECDSA_P384
-              (Id, Random, Bytes_48 (Transcript_Hash (Transcript_Hash'First .. Transcript_Hash'First + 47)),
+              (Id, Bytes_48 (Transcript_Hash (Transcript_Hash'First .. Transcript_Hash'First + 47)),
                Sig, Sig_Len, Sig_OK);
 
          when Sig_Ed25519 =>
@@ -1451,7 +1490,7 @@ is
             Hash_Algo := 4;
             Sig_Algo := 3;
             Sign_Hash_ECDSA_P256
-              (Id, Random,
+              (Id,
                Bytes_32 (Transcript_Hash (Transcript_Hash'First .. Transcript_Hash'First + 31)),
                Sig, Sig_Len, Sig_OK);
 
@@ -1526,8 +1565,6 @@ is
       subtype TLS12_SH_Ext_Block_Len is N32 range 0 .. 285;
       subtype TLS12_SH_Body_Len is N32 range 38 .. 355;
       subtype TLS12_SH_Msg_Len is N32 range 42 .. 359;
-
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Renegotiation info (0xFF01): data = 1 byte (length=0).
       --  Always emit. RFC 5746 3.6 says only emit if the client
@@ -1613,8 +1650,13 @@ is
       declare
          Tmp_SR  : Bytes_32;
          Tmp_SID : Bytes_32;
+         Rand_OK : Boolean;
       begin
-         Gen_Random (Byte_Seq (Tmp_SR));
+         Draw (Byte_Seq (Tmp_SR), Rand_OK);
+         if not Rand_OK then
+            HC.Ext_Parse_Err := Entropy_Failure;
+            return;
+         end if;
          if HC.Cfg.Versions /= TLS_1_2_Only then
             --  RFC 8446 4.1.3: a TLS 1.3-capable server negotiating
             --  TLS 1.2 MUST mark ServerHello.random with DOWNGRD\x01.
@@ -1634,7 +1676,11 @@ is
          --  NOT overwrite it on the resume path. For a fresh handshake
          --  generate a new SID as before.
          if not HC.T12.Resuming then
-            Gen_Random (Byte_Seq (Tmp_SID));
+            Draw (Byte_Seq (Tmp_SID), Rand_OK);
+            if not Rand_OK then
+               HC.Ext_Parse_Err := Entropy_Failure;
+               return;
+            end if;
             HC.Legacy_Session_ID := Tmp_SID;
             HC.Legacy_Session_ID_Len := 32;
          end if;

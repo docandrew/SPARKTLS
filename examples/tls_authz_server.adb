@@ -221,7 +221,6 @@ procedure TLS_Authz_Server is
       --  Skip_Verify stays False: the hook only narrows a verified chain.
       S := Server.Configure
         ((Local               => Id'Unchecked_Access,
-          Random              => Entropy_Random.Random'Access,
           Trust               => Roots'Unchecked_Access,
           Request_Client_Cert => True,
           Require_Client_Cert => True,
@@ -325,7 +324,6 @@ begin
      (Id,
       Ada.Command_Line.Argument (1),
       Ada.Command_Line.Argument (2),
-      Entropy_Random.Random'Access,
       Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load identity");

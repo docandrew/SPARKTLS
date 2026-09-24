@@ -2,7 +2,7 @@
 --  Handles one connection at a time, sequentially. No epoll, no async.
 --  Perfect for tlsfuzzer and protocol testing tools.
 --
---  Usage: tls_blocking_server <cert.pem> <key.pem>
+--  Usage: tls_blocking_server <cert.pem> <key.pem> [options]
 
 with Ada.Calendar;
 with Ada.Calendar.Formatting;
@@ -22,6 +22,8 @@ with SPARKTLS.Credentials;
 with Software_Signer;
 with SPARKTLS.Tickets;
 with Entropy_Random;
+with SPARKTLS.RBG;
+use type SPARKTLS.RBG.RBG_Status;
 
 with GNAT.Sockets;               use GNAT.Sockets;
 with SPARKTLS.Ticket_Keys;
@@ -250,7 +252,6 @@ procedure TLS_Blocking_Server is
       S := Server.Configure
         ((Local               => Id'Unchecked_Access,
           Identities          => (if Extra_Count > 0 then Id_Set'Unchecked_Access else null),
-          Random              => Entropy_Random.Random'Access,
           Trust               => (if MTLS then Roots'Unchecked_Access
                                   else null),
           Request_Client_Cert => MTLS,
@@ -421,15 +422,20 @@ procedure TLS_Blocking_Server is
    end Worker;
 
 begin
-   Entropy_Random.Init;
-
    --  Ticket storage lives in the application, not in SPARKTLS. One call
    --  seeds the first TLS 1.2 ticket key and turns on rotation (24h by
    --  default); rotation is lazy, checked on the ticket path, so there is
    --  no timer task to manage.
+   --  Randomness: SPARKEntropy behind SPARKTLS.RBG (see entropy_random.ads).
+   --  Started here, before the first draw, so a platform without usable
+   --  jitter fails at start-up rather than in a handshake.
+   Entropy_Random.Init (Verbose => True);
+   if SPARKTLS.RBG.Status /= SPARKTLS.RBG.Ready then
+      return;
+   end if;
+
    SPARKTLS.Ticket_Keys.Initialize
-     (Random            => Entropy_Random.Random'Access,
-      Clock             => Now_UTC'Unrestricted_Access,
+     (Clock             => Now_UTC'Unrestricted_Access,
       Rotation_Interval => Get_TEK_Rotate_Secs);
 
    if Ada.Command_Line.Argument_Count < 2 then
@@ -444,7 +450,6 @@ begin
      (Id,
       Ada.Command_Line.Argument (1),
       Ada.Command_Line.Argument (2),
-      Entropy_Random.Random'Access,
       Id_OK);
    if not Id_OK then
       Put_Line ("Failed to load identity");
@@ -468,7 +473,6 @@ begin
               (Extra_Ids (N),
                Ada.Command_Line.Argument (I + 1),
                Ada.Command_Line.Argument (I + 2),
-               Entropy_Random.Random'Access,
                X_OK);
             if not X_OK then
                Put_Line ("Failed to load identity " & Ada.Command_Line.Argument (I + 1));
@@ -583,6 +587,14 @@ begin
    --  object. Terminated Worker objects are not reclaimed; this is a test
    --  server.
    loop
+      --  The "quit" policy for a dead entropy source: the generator has
+      --  latched off (SPARKEntropy failed persistently), so stop accepting
+      --  rather than fail every handshake from here on with
+      --  Entropy_Failure.
+      if SPARKTLS.RBG.Status = SPARKTLS.RBG.Error then
+         Put_Line ("Entropy source dead; shutting down");
+         exit;
+      end if;
       declare
          Client_Sock : Socket_Type;
          Client_Addr : Sock_Addr_Type;

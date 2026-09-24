@@ -133,7 +133,7 @@ begin
    Put_Line ("=== TLS 1.3 PSK resumption client-side wiring ===");
 
    --  Set up a minimal client Config with a resumption ticket.
-   Cfg.Random := Det_Random_Lib.Det_Random'Access;
+   Det_Random_Lib.Reset;
    declare
       H : constant String := "localhost";
    begin

@@ -1093,7 +1093,6 @@ is
      (Id       : out Identity;
       Cert_DER : X509.Byte_Seq;
       Key      : Byte_Seq;
-      Random   : Live_Random_Fn;
       OK       : out Boolean)
    is
       C    : X509.Certificate;
@@ -1177,11 +1176,15 @@ is
                return;
             end if;
             declare
-               Pt    : SPARKTLSCrypto.P256.Point.P256_Jacobian;
-               Enc   : Byte_Seq (0 .. 64);
-               Blind : Byte_Seq (0 .. 39);   --  scalar/coordinate blinding
+               Pt      : SPARKTLSCrypto.P256.Point.P256_Jacobian;
+               Enc     : Byte_Seq (0 .. 64);
+               Blind   : Byte_Seq (0 .. 39);   --  scalar/coordinate blinding
+               Rand_OK : Boolean;
             begin
-               Random.all (Blind);
+               Draw (Blind, Rand_OK);
+               if not Rand_OK then
+                  return;   --  no generator, no identity
+               end if;
                SPARKTLSCrypto.P256.Point.P256_Mulgen_Blinded (Pt, Id.ECDSA_P256_Key, Blind);
                Sanitize (Blind);
                SPARKTLSCrypto.P256.Point.P256_To_Affine (Pt);
@@ -1205,10 +1208,14 @@ is
                return;
             end if;
             declare
-               Enc   : Byte_Seq (0 .. 96);
-               Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+               Enc     : Byte_Seq (0 .. 96);
+               Blind   : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
+               Rand_OK : Boolean;
             begin
-               Random.all (Blind);
+               Draw (Blind, Rand_OK);
+               if not Rand_OK then
+                  return;   --  no generator, no identity
+               end if;
                SPARKTLSCrypto.P384.Point.P384_Mulgen_Blinded
                  (Enc, Byte_Seq (Id.ECDSA_P384_Key), Blind);
                Sanitize (Blind);

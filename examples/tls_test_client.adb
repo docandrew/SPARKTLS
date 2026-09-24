@@ -114,7 +114,6 @@ begin
      ((Server_Name => SPARKTLS.To_Name (Host),
        Trust       => (if Roots_OK then Roots'Unchecked_Access else null),
        Verify_Mode => Mode_RFC5280,
-       Random      => Entropy_Random.Random'Access,
        Get_Time    => Current_Time'Unrestricted_Access,
        Skip_Verify => not Roots_OK,
        others      => <>));

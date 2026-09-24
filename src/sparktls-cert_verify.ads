@@ -356,7 +356,6 @@ is
      (Id       : out Identity;
       Cert_DER : X509.Byte_Seq;
       Key      : Byte_Seq;
-      Random   : Live_Random_Fn;
       OK       : out Boolean)
    with
      Pre =>

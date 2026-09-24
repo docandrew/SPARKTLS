@@ -9,6 +9,7 @@
 --  and the integration lane.
 --
 --  Usage: test_ocsp_staple <cert.pem> <key.pem>
+with Det_Random_Lib;
 with Ada.Command_Line;
 with Ada.Text_IO; use Ada.Text_IO;
 with Interfaces; use Interfaces;
@@ -119,6 +120,7 @@ procedure Test_OCSP_Staple is
    end Check_TLS13;
 
 begin
+   Det_Random_Lib.Reset;   --  start SPARKTLS.RBG from the deterministic test source
    Put_Line ("OCSP stapling (server side)");
    Put_Line ("===========================");
 
@@ -129,8 +131,7 @@ begin
    end if;
 
    SPARKTLS.Credentials.Load_Identity
-     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2),
-      Test_Random'Unrestricted_Access, Id_OK);
+     (Id, Ada.Command_Line.Argument (1), Ada.Command_Line.Argument (2), Id_OK);
    Check ("identity loads", Id_OK);
    if not Id_OK then
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);

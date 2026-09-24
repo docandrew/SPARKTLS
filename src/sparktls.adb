@@ -8,6 +8,7 @@ with SPARKTLSCrypto.HKDF384;
 
 with SPARKTLS.Key_Update;
 
+with SPARKTLS.RBG;
 package body SPARKTLS
   with SPARK_Mode => On
 is
@@ -1096,6 +1097,9 @@ is
          when Internal_Error =>
             return "internal error: an invariant was violated (alert 80)";
 
+         when Entropy_Failure =>
+            return "the random generator returned nothing; the operation was abandoned (alert 80)";
+
          when Insufficient_Buffer =>
             return "the caller-supplied buffer was too small for the data";
 
@@ -1190,24 +1194,20 @@ is
       end return;
    end To_Name;
 
-   ----------------------------------------------------------------------------
-   --  Not_Random
-   ----------------------------------------------------------------------------
-   procedure Not_Random (Output : out Byte_Seq)
-   is
-   begin
-      Output := (others => 0);
-   end Not_Random;
 
    ----------------------------------------------------------------------------
-   --  Is_Sentinel_Random
+   --  Draw
    ----------------------------------------------------------------------------
-   function Is_Sentinel_Random (F : Live_Random_Fn) return Boolean
-      with SPARK_Mode => Off
+   procedure Draw
+     (Output : out Byte_Seq;
+      OK     : out Boolean)
    is
    begin
-      return F = Not_Random'Access;
-   end Is_Sentinel_Random;
+      SPARKTLS.RBG.Random (Output);
+      OK := not All_Zero_Bytes (Output);
+   end Draw;
+
+
 
    ----------------------------------------------------------------------------
    --  Set_OCSP_Staple

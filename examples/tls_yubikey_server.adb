@@ -188,7 +188,6 @@ begin
       S := SPARKTLS.Server.Configure
         ((Local  => Id'Unchecked_Access,
           Sign   => PIV_Signer.Sign'Access,      --  the YubiKey signs
-          Random => Entropy_Random.Random'Access,
           others => <>));
 
       Peer_Closed := False;

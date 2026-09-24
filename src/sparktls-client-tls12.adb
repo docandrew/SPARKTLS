@@ -1025,21 +1025,24 @@ is
        and then
          (if SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local))
-       and then Err in No_Error | Illegal_Parameter | Handshake_Failure
+       and then Err in No_Error | Illegal_Parameter | Handshake_Failure | Entropy_Failure
        and then (if OK then Err = No_Error);
 
    procedure Derive_Client_Shared_Secret_12
      (HC : in out Engaged_Context; OK : out Boolean; Err : out Error_Code)
    is
-      Gen : constant Random_Bytes_Fn := HC.Cfg.Random;
+      Rand_OK : Boolean;
    begin
       OK := False;
       Err := Handshake_Failure;
-      pragma Assert (Gen /= null);
 
       case HC.KE.Curve is
          when Group_X25519    =>
-            Gen (Byte_Seq (HC.KE.Local_SK));
+            Draw (Byte_Seq (HC.KE.Local_SK), Rand_OK);
+            if not Rand_OK then
+               Err := Entropy_Failure;
+               return;
+            end if;
             HC.KE.Shared (0 .. 31) := SPARKNaCl.Scalar.Mult (HC.KE.Local_SK, HC.KE.Peer_PK);
             OK := Shared_Secret_Is_Acceptable_X25519 (HC.KE.Shared (0 .. 31));
             if OK then
@@ -1049,7 +1052,11 @@ is
             end if;
 
          when Group_Secp256r1 =>
-            Gen (Byte_Seq (HC.KE.P256_SK));
+            Draw (Byte_Seq (HC.KE.P256_SK), Rand_OK);
+            if not Rand_OK then
+               Err := Entropy_Failure;
+               return;
+            end if;
             declare
                use SPARKTLSCrypto.P256.Point;
                Pt : P256_Jacobian;
@@ -1060,8 +1067,13 @@ is
                   declare
                      Blind : Byte_Seq (0 .. 39);   --  SR-62
                   begin
-                     Gen (Blind);
+                     Draw (Blind, Rand_OK);
+                     if not Rand_OK then
+                        Err := Entropy_Failure;
+                        return;
+                     end if;
                      P256_Mul_Blinded (Pt, HC.KE.P256_SK, Blind);
+                     Sanitize (Blind);
                   end;
                   P256_To_Affine (Pt);
                   declare
@@ -1079,13 +1091,21 @@ is
             end;
 
          when Group_Secp384r1 =>
-            Gen (Byte_Seq (HC.KE.P384_SK));
+            Draw (Byte_Seq (HC.KE.P384_SK), Rand_OK);
+            if not Rand_OK then
+               Err := Entropy_Failure;
+               return;
+            end if;
             declare
                SS    : Bytes_48;
                OK384 : Boolean;
                Blind : Byte_Seq (0 .. 55);   --  scalar/coordinate blinding
             begin
-               Gen (Blind);
+               Draw (Blind, Rand_OK);
+               if not Rand_OK then
+                  Err := Entropy_Failure;
+                  return;
+               end if;
                SPARKTLSCrypto.P384.Point.P384_ECDHE_Blinded
                  (SS, OK384, HC.KE.P384_SK, HC.KE.P384_PK, Blind);
                Sanitize (Blind);
@@ -1254,13 +1274,21 @@ is
    is
       CKE     : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
       CKE_Len : N32;
+      CKE_Err : Error_Code;
    begin
       Result := OK;
-      Build_Client_Key_Exchange (S.HC, CKE, CKE_Len);
+      Build_Client_Key_Exchange (S.HC, CKE, CKE_Len, CKE_Err);
+      --  An ECDHE suite was negotiated, so the ClientKeyExchange is
+      --  mandatory: an empty build is a local failure (the blind draw
+      --  returned nothing, or no group), not a message to leave out.
+      if CKE_Len = 0 then
+         Send_Alert_And_Error (S, CKE_Err, Result);
+         return;
+      end if;
       pragma
         Assert_And_Cut
           (Result = OK
-           and then CKE_Len <= Max_Client_Key_Exchange
+           and then CKE_Len in 1 .. Max_Client_Key_Exchange
            and then S.Negotiated_Suite in TLS12_Suite);
       if CKE_Len > 0 then
          Append_TLS12_Client_Handshake_Record
@@ -1339,7 +1367,6 @@ is
            (Transcript_Hash => Byte_Seq (TH5_CV),
             Id              => HC.Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-            Random          => HC.Cfg.Random,
             Sign            => HC.Cfg.Sign,
             Result          => CV_Buf,
             Len             => CV_Len);
@@ -1349,7 +1376,6 @@ is
            (Transcript_Hash => Byte_Seq (TH4_CV),
             Id              => HC.Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-            Random          => HC.Cfg.Random,
             Sign            => HC.Cfg.Sign,
             Result          => CV_Buf,
             Len             => CV_Len);
@@ -1359,7 +1385,6 @@ is
            (Transcript_Hash => Byte_Seq (TH_CV),
             Id              => HC.Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-            Random          => HC.Cfg.Random,
             Sign            => HC.Cfg.Sign,
             Result          => CV_Buf,
             Len             => CV_Len);

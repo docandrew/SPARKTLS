@@ -355,7 +355,7 @@ begin
          Sess  : SPARKTLS.Client_Session;
          Roots : aliased Trust_Store;
       begin
-         Cfg.Random      := Det_Random_Lib.Det_Random'Access;
+         Det_Random_Lib.Reset;
          Cfg.Skip_Verify := Skip;
          declare
             H : constant String := "localhost";

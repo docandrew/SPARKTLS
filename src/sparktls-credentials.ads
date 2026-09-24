@@ -17,12 +17,10 @@ is
    --  Key_Path: PEM file with PRIVATE KEY (Ed25519, P-256, or P-384).
    --
    --  The signing algorithm is inferred from the leaf certificate.
-   --  Random: CSPRNG for the blinded key/certificate consistency check.
    procedure Load_Identity
      (Id        : out Identity;
       Cert_Path : String;
       Key_Path  : String;
-      Random    : Live_Random_Fn;
       OK        : out Boolean);
 
    --  Load identity from PEM strings (for embedded certs, testing).
@@ -30,7 +28,6 @@ is
      (Id       : out Identity;
       Cert_PEM : String;
       Key_PEM  : String;
-      Random   : Live_Random_Fn;
       OK       : out Boolean);
 
    --  Public-only identity: the certificate chain, no private key. Every

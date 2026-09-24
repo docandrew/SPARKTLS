@@ -120,7 +120,6 @@ procedure TLS_SNI_Server is
 
       S := Server.Configure
         ((Local           => Id_Default'Unchecked_Access,
-          Random          => Entropy_Random.Random'Access,
           Select_Identity => Pick_Identity'Unrestricted_Access,
           others          => <>));
 
@@ -193,7 +192,6 @@ begin
      (Id_Default,
       Ada.Command_Line.Argument (1),
       Ada.Command_Line.Argument (2),
-      Entropy_Random.Random'Access,
       Id_Default_OK);
    if not Id_Default_OK then
       Put_Line ("Failed to load default identity");
@@ -204,7 +202,6 @@ begin
      (Id_Alt,
       Ada.Command_Line.Argument (3),
       Ada.Command_Line.Argument (4),
-      Entropy_Random.Random'Access,
       Id_Alt_OK);
    if not Id_Alt_OK then
       Put_Line ("Failed to load alt identity");
