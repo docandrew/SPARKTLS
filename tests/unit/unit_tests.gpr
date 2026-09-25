@@ -8,7 +8,7 @@ project Unit_Tests is
    --  accessor child. It lives outside src/ so it is never compiled into
    --  the shipped library -- see tests/support/sparktls-test_support.ads.
    for Source_Dirs use (".", "../support");
-   for Main use ("test_prepared_write.adb", "test_aead_cap_boundary.adb",
+   for Main use ("test_send_ciphertext.adb", "test_prepared_write.adb", "test_aead_cap_boundary.adb",
                  "test_record_header_length.adb",
                  "test_sha384_streaming_kat.adb",
                  "test_sha1_cavp.adb",

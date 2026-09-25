@@ -1,0 +1,6 @@
+project Checked_Output extends "unit_tests.gpr" is
+   for Object_Dir use "obj_checked_output";
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnata", "-gnato");
+   end Compiler;
+end Checked_Output;
