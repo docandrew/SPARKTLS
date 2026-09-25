@@ -485,14 +485,14 @@ is
             end if;
          end if;
 
-         declare
-            Frag_Len : constant N32 := Chunk;
-            Frag     : Byte_Seq (0 .. Frag_Len - 1);
-         begin
-            Frag := Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Frag_Len - 1);
-
-            if S.Role = Role_Client then
-               if S.Version = TLS_1_2 then
+         if S.Version = TLS_1_2 then
+            --  TLS 1.2's builder still requires a zero-based buffer.
+            declare
+               Frag_Len : constant N32 := Chunk;
+               Frag : constant Byte_Seq (0 .. Frag_Len - 1) :=
+                 Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Chunk - 1);
+            begin
+               if S.Role = Role_Client then
                   Records.TLS12.Build_Encrypted_Record_12
                     (Plaintext    => Frag,
                      Content_Type => 16#17#,
@@ -501,16 +501,6 @@ is
                      Output       => S.Output,
                      Bytes_Out    => Enc_Out);
                else
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => Frag,
-                     Inner_Type => 16#17#,
-                     Keys       => S.Client_App,
-                     Output     => S.Output,
-                     Bytes_Out  => Enc_Out,
-                     Prepared   => S.Write_GCM);
-               end if;
-            else
-               if S.Version = TLS_1_2 then
                   Records.TLS12.Build_Encrypted_Record_12
                     (Plaintext    => Frag,
                      Content_Type => 16#17#,
@@ -518,17 +508,29 @@ is
                      Implicit_IV  => S.Server_IV_12,
                      Output       => S.Output,
                      Bytes_Out    => Enc_Out);
-               else
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => Frag,
-                     Inner_Type => 16#17#,
-                     Keys       => S.Server_App,
-                     Output     => S.Output,
-                     Bytes_Out  => Enc_Out,
-                     Prepared   => S.Write_GCM);
                end if;
+            end;
+         else
+            --  TLS 1.3 accepts the original slice. The record builder
+            --  copies it into Output before encrypting in place.
+            if S.Role = Role_Client then
+               Records.Build_Encrypted_Record
+                 (Plaintext  => Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Chunk - 1),
+                  Inner_Type => 16#17#,
+                  Keys       => S.Client_App,
+                  Output     => S.Output,
+                  Bytes_Out  => Enc_Out,
+                  Prepared   => S.Write_GCM);
+            else
+               Records.Build_Encrypted_Record
+                 (Plaintext  => Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Chunk - 1),
+                  Inner_Type => 16#17#,
+                  Keys       => S.Server_App,
+                  Output     => S.Output,
+                  Bytes_Out  => Enc_Out,
+                  Prepared   => S.Write_GCM);
             end if;
-         end;
+         end if;
 
          exit when Enc_Out = 0;
          Pos := Pos + Chunk;

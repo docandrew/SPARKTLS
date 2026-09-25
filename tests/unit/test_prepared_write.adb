@@ -27,19 +27,23 @@ procedure Test_Prepared_Write is
          for I in Plain'Range loop Plain (I) := Byte (I mod 251); end loop;
          while Pos < Len loop
             Chunk := N32'Min (16384, Len - Pos);
+            exit when Free_Space (Expected) < Chunk + 22;
             Records.Build_Encrypted_Record
               (Plain (Pos .. Pos + Chunk - 1), 16#17#, Keys, Expected, Encoded);
             Check (Encoded = Chunk + 22, "reference record size");
             Pos := Pos + Chunk;
          end loop;
          Write_Plaintext (S, Plain, Written);
-         Check (Written = Len, "incomplete write");
+         Check (Written = Pos and Written > 0, "incorrect partial-write boundary");
+         Check ((for all I in Plain'Range => Plain (I) = Byte (I mod 251)),
+                "write changed caller plaintext");
          Drain_Ciphertext (S, Scratch, N);
          Check (N = Expected.Write_Pos, "wire length mismatch");
          Check (Scratch (0 .. N - 1) = Byte_Seq (Expected.Storage (1 .. RBT_A.Index (N))),
                 "cached write differs from one-shot record");
          Check (TS.Write_Keys (S).Counter = Keys.Counter, "counter advanced incorrectly");
-         Check (not TS.Write_Cache_Erased (S), "AES cache not prepared");
+         Check (TS.Write_Cache_Erased (S) = (Suite = Suite_ChaCha20_Poly1305_SHA256),
+                "unexpected cache state for suite");
       end Write_And_Check;
       procedure Rotate_And_Check is
          Expected : IO_Buffer;
@@ -64,6 +68,7 @@ procedure Test_Prepared_Write is
       Write_And_Check (1);
       Write_And_Check (64);
       Write_And_Check (16384 + 37);
+      Write_And_Check (3 * 16384 + 5);
       Rotate_And_Check;
       Rotate_And_Check;
       --  A full output buffer delays rotation, retaining the old key/cache.
@@ -73,7 +78,10 @@ procedure Test_Prepared_Write is
       begin
          Request_Key_Update (S);
          Check (TS.Write_Keys (S) = Keys, "failed rekey changed traffic keys");
-         Check (not TS.Write_Cache_Erased (S), "failed rekey cleared live cache");
+         Check (TS.Write_Cache_Erased (S) = (Suite = Suite_ChaCha20_Poly1305_SHA256),
+                "failed rekey changed cache state");
+         Write_Plaintext (S, Byte_Seq'(1, 2, 3), N);
+         Check (N = 0 and TS.Write_Keys (S) = Keys, "full output consumed input");
       end;
       Drain_Ciphertext (S, Scratch, N);
       Rotate_And_Check;
@@ -102,6 +110,7 @@ begin
    for Role in TLS_Role loop
       Exercise (Role, Suite_AES_128_GCM_SHA256);
       Exercise (Role, Suite_AES_256_GCM_SHA384);
+      Exercise (Role, Suite_ChaCha20_Poly1305_SHA256);
    end loop;
    Put_Line ("PASS: prepared application writes and lifecycle checks:" & Total'Image);
 end Test_Prepared_Write;
