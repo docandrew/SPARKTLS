@@ -925,12 +925,8 @@ is
             end;
          end if;
          Hybrid_Share (0 .. 1183) := Byte_Seq (KE.Hybrid_DK (1152 .. 2335));
-         declare
-            Basepoint : constant Bytes_32 := (9, others => 0);
-         begin
-            SPARKTLSCrypto.X25519.Scalar_Mult
-              (Hybrid_Share (1184 .. 1215), KE.Hybrid_SK, Basepoint);
-         end;
+         SPARKTLSCrypto.X25519.Scalar_Mult_Base
+           (Hybrid_Share (1184 .. 1215), KE.Hybrid_SK);
       end if;
       --  Generate ephemeral X25519 keypair (Fiat X25519).
       --  In retry mode (CH2 for HRR), reuse the CH1 SK so the server
@@ -946,11 +942,7 @@ is
             KE.Local_SK := Tmp_X25519;
             Sanitize (Tmp_X25519);
          end if;
-         declare
-            Basepoint : constant Bytes_32 := (9, others => 0);
-         begin
-            SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, KE.Local_SK, Basepoint);
-         end;
+         SPARKTLSCrypto.X25519.Scalar_Mult_Base (PK_Bytes, KE.Local_SK);
       end;
 
       --  Generate ephemeral P-256 keypair (reused in retry mode).
@@ -1282,7 +1274,7 @@ is
       --  (BoGo Basic-Client-RenewTicket-*).
       HC.Legacy_Session_ID_Len := (if HC.Cfg.Versions = TLS_1_2_Only then 0 else 32);
 
-      --  PK_Bytes already set by X25519.Scalar_Mult above
+      --  PK_Bytes already set by X25519.Scalar_Mult_Base above
 
       --  Bound the message BEFORE writing any of it. The equivalent check
       --  used to run only after Take_Buffer, which meant nothing told the
