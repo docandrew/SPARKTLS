@@ -94,19 +94,20 @@ echo ""
 # ===================================================================
 # A peer that disconnects after our ServerHello (scanners, speculative
 # browser connections) leaves the session mid-handshake. The server
-# must hand the SPARKTLS.HS_Pool slot back (SPARKTLS.Drop) or, after
-# Max_Inflight = 16 such peers, answer nobody: found 2026-09-14 when
-# every TLS-Anvil test came back disabled.
+# must hand its handshake-pool slot back (SPARKTLS.Drop) or, once the
+# example servers' pool is full (examples/server_pool.ads: 64 slots),
+# answer nobody: found 2026-09-14 when every TLS-Anvil test came back
+# disabled. So the driver drops more peers than the pool has slots.
 echo "--- Abandoned handshakes: pool release ---"
 cleanup
 "$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" 2>/dev/null &
 sleep 1
-if python3 "$DIR/abandoned_handshakes.py" "$PORT" 20 >/dev/null 2>&1; then
+if python3 "$DIR/abandoned_handshakes.py" "$PORT" 80 >/dev/null 2>&1; then
     output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -tls1_2 -quiet 2>&1 || true)
     if echo "$output" | grep -qi "hello\|verify return"; then
-        pass "Server still answers after 20 abandoned handshakes"
+        pass "Server still answers after 80 abandoned handshakes"
     else
-        fail "Server still answers after 20 abandoned handshakes (pool exhausted)"
+        fail "Server still answers after 80 abandoned handshakes (pool exhausted)"
     fi
 else
     fail "Abandoned-handshake driver: not every ClientHello got a ServerHello"
@@ -129,6 +130,50 @@ if [ -x "$WEB_EPOLL" ]; then
     else
         fail "epoll server drops silent clients at the handshake deadline and keeps serving"
         grep -c "handshake timeout" /tmp/epoll_deadline.log | sed 's/^/    timeouts logged: /'
+    fi
+    cleanup
+
+    # Worker tasks: each an epoll loop with its own connection table and
+    # handshake pool, sharing one listening socket. Every one of a burst
+    # of parallel clients must complete its handshake.
+    echo "--- epoll server: four workers, parallel clients ---"
+    cleanup
+    SPARKTLS_WORKERS=4 "$WEB_EPOLL" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/epoll_workers.log 2>&1 &
+    sleep 1
+    client_pids=()
+    for i in $(seq 1 16); do
+        (echo | timeout 10 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 | grep -c "Cipher is TLS" > /tmp/epoll_worker_client_$i.out) &
+        client_pids+=($!)
+    done
+    wait "${client_pids[@]}" 2>/dev/null
+    done_count=$(cat /tmp/epoll_worker_client_*.out 2>/dev/null | paste -sd+ | bc)
+    rm -f /tmp/epoll_worker_client_*.out
+    if grep -q "Workers: 4" /tmp/epoll_workers.log && [ "${done_count:-0}" = 16 ]; then
+        pass "epoll server with 4 workers completes 16 parallel handshakes"
+    else
+        fail "epoll server with 4 workers completes 16 parallel handshakes (${done_count:-0}/16)"
+    fi
+    cleanup
+
+    # Admission control: a worker watches the listening socket only while
+    # it has a free connection entry and a free handshake slot. With both
+    # workers full of silent clients, a real client waits in the backlog --
+    # it is not accepted and refused -- and is served once the handshake
+    # deadline frees an entry.
+    echo "--- epoll server: full workers queue new connections ---"
+    cleanup
+    SPARKTLS_WORKERS=2 SPARKTLS_MAX_CONNECTIONS=1 SPARKTLS_HANDSHAKE_SLOTS=1 SPARKTLS_HANDSHAKE_TIMEOUT=2 \
+        "$WEB_EPOLL" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/epoll_admission.log 2>&1 &
+    sleep 1
+    python3 "$DIR/silent_connections.py" "$PORT" 2 6 >/dev/null 2>&1 &
+    silent_pid=$!
+    sleep 0.5
+    output=$(echo | timeout 10 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 || true)
+    wait $silent_pid 2>/dev/null
+    if echo "$output" | grep -q "Cipher is TLS" && [ "$(grep -c "handshake timeout" /tmp/epoll_admission.log)" -ge 2 ]; then
+        pass "epoll server queues a connection while full and serves it when a slot frees"
+    else
+        fail "epoll server queues a connection while full and serves it when a slot frees"
     fi
     cleanup
 else

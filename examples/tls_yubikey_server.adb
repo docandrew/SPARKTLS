@@ -21,6 +21,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Cert_Verify;
+with Server_Pool;
 with X509;
 with Entropy_Random;
 with GNAT.Sockets;               use GNAT.Sockets;
@@ -188,11 +189,11 @@ begin
       S := SPARKTLS.Server.Configure
         ((Local  => Id'Unchecked_Access,
           Sign   => PIV_Signer.Sign'Access,      --  the YubiKey signs
-          others => <>));
+          others => <>), Server_Pool.Handshakes);
 
       Peer_Closed := False;
       Handshake : loop
-         SPARKTLS.Server.Advance (S, Res);
+         SPARKTLS.Server.Advance (S, Server_Pool.Handshakes, Res);
          exit Handshake when Peer_Closed;
          case Res is
             when Has_Output     => Send_Output;
@@ -211,7 +212,7 @@ begin
 
       if Res = Handshake_Done and not Peer_Closed then
          Echo : loop
-            SPARKTLS.Server.Advance (S, Res);
+            SPARKTLS.Server.Advance (S, Server_Pool.Handshakes, Res);
             exit Echo when Peer_Closed;
             case Res is
                when Has_Output      => Send_Output;

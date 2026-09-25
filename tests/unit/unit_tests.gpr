@@ -22,6 +22,7 @@ project Unit_Tests is
                  "test_build_server_hello_12.adb",
                  "test_entropy_failure.adb",
                  "test_rbg.adb",
+                 "test_hs_pool.adb",
                  "test_handshake_tls13.adb",
                  "test_parse_client_hello.adb",
                  "test_aes_ni.adb",

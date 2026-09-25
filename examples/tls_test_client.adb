@@ -23,6 +23,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 
 with SPARKTLS;         use SPARKTLS;
 with SPARKTLS.Client;
+with Client_Pool;
 with Entropy_Random;
 with X509;
 
@@ -116,13 +117,13 @@ begin
        Verify_Mode => Mode_RFC5280,
        Get_Time    => Current_Time'Unrestricted_Access,
        Skip_Verify => not Roots_OK,
-       others      => <>));
+       others      => <>), Client_Pool.Handshakes);
    Put_Line ("ClientHello built, output pending:" &
       SPARKTLS.Output_Pending (S)'Image & " bytes");
 
    --  Main handshake + data loop
    Handshake_Loop : loop
-      SPARKTLS.Client.Advance (S, Res);
+      SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
       Put_Line ("  Advance: state=" & State (S)'Image &
          " res=" & SPARKTLS.Action'Image (Res) &
          " ver=" & SPARKTLS.TLS_Version'Image (SPARKTLS.Get_Version (S)));
@@ -226,7 +227,7 @@ begin
                   SPARKTLS.Feed_Ciphertext (S, Net_Buf (0 .. N - 1), N);
 
                   --  Process the record
-                  SPARKTLS.Client.Advance (S, Res);
+                  SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
                   if Res = SPARKTLS.Plaintext_Ready then
                      SPARKTLS.Read_Plaintext (S, Net_Buf, N);
                      Put_Line ("App data from server (" & N'Image & " bytes)");
@@ -276,7 +277,7 @@ begin
                N := 5 + Rec_Len;
 
                SPARKTLS.Feed_Ciphertext (S, Net_Buf (0 .. N - 1), N);
-               SPARKTLS.Client.Advance (S, Res);
+               SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
 
                if Res = SPARKTLS.Plaintext_Ready then
                   declare
@@ -315,7 +316,7 @@ begin
    Put_Line ("Final state: " & State (S)'Image);
    Put_Line ("Done.");
 
-   SPARKTLS.Drop (S);
+   SPARKTLS.Drop (S, Client_Pool.Handshakes);
 
    GNAT.Sockets.Close_Socket (Sock);
 
@@ -323,7 +324,7 @@ exception
    when E : others =>
       Put_Line ("Fatal: " & Ada.Exceptions.Exception_Message (E));
       begin
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Client_Pool.Handshakes);
          GNAT.Sockets.Close_Socket (Sock);
       exception
          when others => null;

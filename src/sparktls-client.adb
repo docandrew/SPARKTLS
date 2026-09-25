@@ -301,7 +301,7 @@ is
       end if;
    end Initialize_Client_Handshake;
 
-   function Configure (Cfg : in Config) return Session is
+   function Configure (Cfg : in Config; Pool : in out Handshake_Pool) return Session is
       OK            : Boolean;
       Resume_Usable : Boolean := False;
    begin
@@ -319,7 +319,7 @@ is
             Set_State (S, Error_State);
             S.Last_Error := Bad_Configuration;
          else
-            SPARKTLS.HS_Pool.Acquire (S.Slot);
+            SPARKTLS.HS_Pool.Acquire (Pool, S.Slot);
 
             if S.Slot = No_Slot then
                S.State := Error_State;
@@ -334,10 +334,10 @@ is
                declare
                   Acquired_Slot : constant Slot_Index := S.Slot;
                begin
-                  Initialize_Client_Handshake (S, SPARKTLS.HS_Pool.Slots (Acquired_Slot), OK);
+                  Initialize_Client_Handshake (S, Pool.Slots (Acquired_Slot), OK);
 
                   if not OK then
-                     SPARKTLS.HS_Pool.Release (Acquired_Slot);
+                     SPARKTLS.HS_Pool.Release (Pool, Acquired_Slot);
                      S.Slot := No_Slot;
                   end if;
                end;
@@ -1161,12 +1161,14 @@ is
       end case;
    end Advance_Client_Non_Handshake;
 
-   procedure Advance (S : in out Session; Result : out Action) is
+   procedure Advance (S : in out Session; Pool : in out Handshake_Pool; Result : out Action) is
       Handled : Boolean;
    begin
       Advance_Client_Non_Handshake (S, Result, Handled);
       if not Handled then
-         if S.Slot = No_Slot then
+         --  No slot, or a slot this Pool does not have: the session was
+         --  configured with a different pool.
+         if S.Slot = No_Slot or else S.Slot > Pool.Size then
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1190,16 +1192,16 @@ is
             --  #106: state-phase coupling is now single-object (S.State vs
             --  S.HC.Phase) -- the Session predicate carries it.
             if S.State in Client_Hello_Sent | Wait_Server_Hello then
-               Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (Sl), Result);
+               Advance_Handshake (S, Pool.Slots (Sl), Result);
             else
                case S.Version is
                   when TLS_1_2          =>
                      SPARKTLS.Client.TLS12.Advance_Handshake_12
-                       (S, SPARKTLS.HS_Pool.Slots (Sl), Result);
+                       (S, Pool.Slots (Sl), Result);
 
                   when TLS_1_3          =>
                      SPARKTLS.Client.TLS13.Advance_Handshake_13
-                       (S, SPARKTLS.HS_Pool.Slots (Sl), Result);
+                       (S, Pool.Slots (Sl), Result);
 
                   when TLS_Undetermined =>
                      S.Last_Error := Internal_Error;
@@ -1209,7 +1211,7 @@ is
             end if;
 
             if S.State = Connected or S.State = Error_State then
-               S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (Sl).Peer_Leaf.Present;
+               S.Peer_Cert_Valid := Pool.Slots (Sl).Peer_Leaf.Present;
                S.Use_EMS := S.HC.Use_EMS;
                --  Persist resumption flags out of HC before free.
                S.Resumed_From_PSK := S.HC.Using_PSK;
@@ -1225,7 +1227,7 @@ is
                --  transcript (contains plaintext handshake), and
                --  PSK material (resumption secrets).
                Scrub_Handshake_Context (S.HC);
-               SPARKTLS.HS_Pool.Release (Sl);
+               SPARKTLS.HS_Pool.Release (Pool, Sl);
                S.Slot := No_Slot;
             end if;
          end;

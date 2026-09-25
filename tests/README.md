@@ -95,16 +95,27 @@ variables:
     SPARKTLS_TRACE=1           one line per connection accepted and finished
 
 Every connection ends with `SPARKTLS.Drop`, which hands the handshake
-slot back to `SPARKTLS.HS_Pool` when a peer disconnects mid-handshake. A
-server that forgets this stops answering after `Max_Inflight` (16) such
-peers, which is how every TLS-Anvil test came back "disabled" on
-2026-09-14.
+slot back to the server's `Handshake_Pool` when a peer disconnects
+mid-handshake. A server that forgets this stops answering once as many
+such peers as the pool has slots (64 in `tls_blocking_server`) have gone,
+which is how every TLS-Anvil test came back "disabled" on 2026-09-14.
 
-`tls_web_epoll` is the event-driven reference. It keeps a per-connection
-handshake deadline (`SPARKTLS_HANDSHAKE_TIMEOUT`, 10 s) and idle timeout
-(`SPARKTLS_IDLE_TIMEOUT`, 60 s), swept once a second, and Drops whatever
-is past them: the library is sans-I/O and cannot see a silent peer, so the
-application's loop has to. It also honours `SPARKTLS_PORT`.
+`tls_web_epoll` is the event-driven reference. It runs one or more worker
+tasks, each an epoll loop with its own connection table and handshake
+pool, both allocated at start-up. The workers share one listening socket,
+which each watches (`EPOLLEXCLUSIVE`) only while it has a free connection
+entry and a free handshake slot, so connections queue in the backlog
+rather than being refused. Each worker keeps a per-connection handshake
+deadline and idle timeout, swept once a second, and Drops whatever is past
+them: the library is sans-I/O and cannot see a silent peer, so the
+application's loop has to. Its variables:
+
+    SPARKTLS_PORT=N               listen port (8443)
+    SPARKTLS_WORKERS=N            worker tasks (1)
+    SPARKTLS_MAX_CONNECTIONS=N    open connections per worker (256)
+    SPARKTLS_HANDSHAKE_SLOTS=N    handshakes in flight per worker (64)
+    SPARKTLS_HANDSHAKE_TIMEOUT=S  seconds from accept to handshake done (10)
+    SPARKTLS_IDLE_TIMEOUT=S       seconds between requests (60)
 
 ## Adding a unit test program
 

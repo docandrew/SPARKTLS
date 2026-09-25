@@ -24,6 +24,7 @@ with SPARKTLS.Tickets;
 with Det_Random_Lib;
 with X509;
 with SPARKTLS.Test_Support;
+with Test_Pool;
 
 procedure Test_PSK_Resume is
 
@@ -145,7 +146,7 @@ begin
    Now_Second := 10;
 
    --  Init builds CH and queues it in S.Output.
-   S := SPARKTLS.Client.Configure (Cfg);
+   S := SPARKTLS.Client.Configure (Cfg, Test_Pool.Handshakes);
 
    Check ("Init sets Client_Hello_Sent state",
           State (S) = Client_Hello_Sent);
@@ -229,7 +230,7 @@ begin
       Cfg_Mismatch.Server_Name.Len := H'Length;
       Cfg_Mismatch.Skip_Verify := True;
 
-      S_Mismatch := SPARKTLS.Client.Configure (Cfg_Mismatch);
+      S_Mismatch := SPARKTLS.Client.Configure (Cfg_Mismatch, Test_Pool.Handshakes);
       Drain_Ciphertext (S_Mismatch, Net, Drained);
       if Drained > 5 then
          Has_PSK := Find_Ext (Net (5 .. Drained - 1), 16#0029#) /= Not_Found;
@@ -251,7 +252,7 @@ begin
       Drained : N32;
       No_ED   : Boolean := True;
    begin
-      S2 := SPARKTLS.Client.Configure (Cfg2);
+      S2 := SPARKTLS.Client.Configure (Cfg2, Test_Pool.Handshakes);
       Drain_Ciphertext (S2, Net, Drained);
       if Drained > 5 then
          No_ED := Find_Ext (Net (5 .. Drained - 1), 16#002A#) = Not_Found;

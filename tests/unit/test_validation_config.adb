@@ -5,6 +5,7 @@ with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Server;
+with Test_Pool;
 with Det_Random_Lib;
 with X509;
 
@@ -40,7 +41,7 @@ procedure Test_Validation_Config is
         ((Get_Time    => Fixed_Now'Unrestricted_Access,
           Trust       => null,
           Server_Name => To_Name ("example.com"),
-          others      => <>));
+          others      => <>), Test_Pool.Handshakes);
 
       Check ("client Configure: null Trust fails closed",
              State (S) = Error_State);
@@ -55,7 +56,7 @@ procedure Test_Validation_Config is
       Cfg.Get_Time := null;
       Cfg.Skip_Verify := False;
 
-      S := SPARKTLS.Client.Configure (Cfg);
+      S := SPARKTLS.Client.Configure (Cfg, Test_Pool.Handshakes);
 
       Check ("client Init: null Get_Time with verification fails closed",
              State (S) = Error_State);
@@ -70,7 +71,7 @@ procedure Test_Validation_Config is
       Cfg.Get_Time := null;
       Cfg.Skip_Verify := True;
 
-      S := SPARKTLS.Client.Configure (Cfg);
+      S := SPARKTLS.Client.Configure (Cfg, Test_Pool.Handshakes);
 
       Check ("client Init: explicit Skip_Verify allows no Trust/Get_Time",
              State (S) = Client_Hello_Sent);
@@ -85,7 +86,7 @@ procedure Test_Validation_Config is
           Request_Client_Cert => True,
           Require_Client_Cert => True,
           Get_Time            => Fixed_Now'Unrestricted_Access,
-          others              => <>));
+          others              => <>), Test_Pool.Handshakes);
 
       Check ("server Configure: mTLS with null Trust fails closed",
              State (S) = Error_State);
@@ -100,7 +101,7 @@ procedure Test_Validation_Config is
           Request_Client_Cert => True,
           Require_Client_Cert => True,
           Get_Time            => null,
-          others              => <>));
+          others              => <>), Test_Pool.Handshakes);
 
       Check ("server Configure: mTLS with null Get_Time fails closed",
              State (S) = Error_State);
@@ -115,7 +116,7 @@ procedure Test_Validation_Config is
           Request_Client_Cert => False,
           Require_Client_Cert => False,
           Get_Time            => null,
-          others              => <>));
+          others              => <>), Test_Pool.Handshakes);
 
       Check ("server Configure: no mTLS allows null Trust/Get_Time",
              State (S) = Wait_Client_Hello);

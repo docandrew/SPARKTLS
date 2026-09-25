@@ -22,6 +22,7 @@ with SPARKTLS.Credentials;
 with SPARKTLS.Revocation;
 with Ada.Streams.Stream_IO;
 with SPARKTLS.System_Roots;
+with Client_Pool;
 with Entropy_Random;
 
 with X509;
@@ -386,7 +387,7 @@ begin
               (Standard_Error,
                "Error: failed to load trust roots; use --cafile or --insecure");
             Ada.Command_Line.Set_Exit_Status (1);
-            SPARKTLS.Drop (S);
+            SPARKTLS.Drop (S, Client_Pool.Handshakes);
             GNAT.Sockets.Close_Socket (Sock);
             return;
          end if;
@@ -419,10 +420,10 @@ begin
                           then SPARKTLS.Mode_RFC5280
                           else SPARKTLS.Mode_WebPKI),
           Skip_Verify => Insecure,
-          others      => <>));
+          others      => <>), Client_Pool.Handshakes);
 
       Handshake : loop
-         SPARKTLS.Client.Advance (S, Res);
+         SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
 
          case Res is
             when SPARKTLS.Has_Output =>
@@ -436,7 +437,7 @@ begin
                if SPARKTLS.State (S) = SPARKTLS.Error_State then
                   Put_Line ("TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
                   Ada.Command_Line.Set_Exit_Status (1);
-                  SPARKTLS.Drop (S);
+                  SPARKTLS.Drop (S, Client_Pool.Handshakes);
                   GNAT.Sockets.Close_Socket (Sock);
                   return;
                end if;
@@ -449,7 +450,7 @@ begin
                   if Done then
                      Put_Line ("Error: connection closed during handshake");
             Ada.Command_Line.Set_Exit_Status (1);
-                     SPARKTLS.Drop (S);
+                     SPARKTLS.Drop (S, Client_Pool.Handshakes);
                      GNAT.Sockets.Close_Socket (Sock);
                      return;
                   end if;
@@ -490,14 +491,14 @@ begin
             when SPARKTLS.Error_Alert =>
                Put_Line ("TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
                   Ada.Command_Line.Set_Exit_Status (1);
-               SPARKTLS.Drop (S);
+               SPARKTLS.Drop (S, Client_Pool.Handshakes);
                GNAT.Sockets.Close_Socket (Sock);
                return;
 
             when SPARKTLS.Shutdown =>
                Put_Line ("Error: server closed connection during handshake");
             Ada.Command_Line.Set_Exit_Status (1);
-               SPARKTLS.Drop (S);
+               SPARKTLS.Drop (S, Client_Pool.Handshakes);
                GNAT.Sockets.Close_Socket (Sock);
                return;
 
@@ -521,7 +522,7 @@ begin
             begin
                Read_Record (Channel, S, Net_Buf, Done);
                exit Post_HS when Done;
-               SPARKTLS.Client.Advance (S, Res);
+               SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
                if Res = SPARKTLS.Plaintext_Ready then
                   SPARKTLS.Read_Plaintext (S, Net_Buf, N);
                end if;
@@ -592,7 +593,7 @@ begin
 
                --  Process it
                Process_Loop : loop
-                  SPARKTLS.Client.Advance (S, Res);
+                  SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
 
                   case Res is
                      when SPARKTLS.Plaintext_Ready =>
@@ -684,7 +685,7 @@ begin
          end if;
       end if;
 
-      SPARKTLS.Drop (S);
+      SPARKTLS.Drop (S, Client_Pool.Handshakes);
 
       GNAT.Sockets.Close_Socket (Sock);
    end;
@@ -695,7 +696,7 @@ exception
          "Fatal: " & Ada.Exceptions.Exception_Message (E));
       Ada.Command_Line.Set_Exit_Status (1);
       begin
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Client_Pool.Handshakes);
          GNAT.Sockets.Close_Socket (Sock);
       exception
          when others => null;

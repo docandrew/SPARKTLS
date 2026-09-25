@@ -26,6 +26,7 @@ with SPARKNaCl;               use SPARKNaCl;
 with SPARKTLS;                use SPARKTLS;
 with SPARKTLS.Tickets;
 with SPARKTLS.Client;
+with Test_Pool;
 with Det_Random_Lib;
 with X509;
 
@@ -372,7 +373,7 @@ begin
          if With_Ticket then
             Cfg.Resume_Ticket := Usable_Ticket;
          end if;
-         Sess := SPARKTLS.Client.Configure (Cfg);
+         Sess := SPARKTLS.Client.Configure (Cfg, Test_Pool.Handshakes);
          if Want_Start then
             Check (Label, State (Sess) = Client_Hello_Sent);
          else

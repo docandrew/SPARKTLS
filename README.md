@@ -124,9 +124,9 @@ freed. `Drop` is the other one: the transport died, a timeout fired, or the
 application is done with the connection. It scrubs every key and handshake
 secret and frees the slot without touching the wire, and it is safe and
 idempotent in every state. Call it on every path that stops driving a
-session; a server that forgets does not answer anyone once `Max_Inflight`
-(16) peers have disconnected mid-handshake, which scanners and browsers'
-speculative connections do routinely. Close_Notify only has meaning once the
+session; a server that forgets does not answer anyone once as many peers
+as its `Handshake_Pool` has slots have disconnected mid-handshake, which
+scanners and browsers' speculative connections do routinely. Close_Notify only has meaning once the
 handshake is complete, and a peer that never answers it is finished with
 `Drop` as well.
 

@@ -19,6 +19,7 @@ with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
 with SPARKTLS.Ticket_Keys;
+with Server_Pool;
 
 procedure TLS_Bench_Server is
 
@@ -85,7 +86,7 @@ procedure TLS_Bench_Server is
       Dummy := C_Close (Conns (Idx).FD);
       Conns (Idx).State := Closed;
       --  Give the handshake slot back (see SPARKTLS.Drop).
-      SPARKTLS.Drop (Conns (Idx).S);
+      SPARKTLS.Drop (Conns (Idx).S, Server_Pool.Handshakes);
    end Close_Conn;
 
    procedure Handle_Readable (Idx : Conn_Index) is
@@ -104,7 +105,7 @@ procedure TLS_Bench_Server is
       SPARKTLS.Feed_Ciphertext (Conn.S, Raw_Buf (0 .. N32 (Rd) - 1), Fed);
 
       loop
-         SPARKTLS.Server.Advance (Conn.S, Res);
+         SPARKTLS.Server.Advance (Conn.S, Server_Pool.Handshakes, Res);
 
          case Res is
             when SPARKTLS.Has_Output =>
@@ -247,7 +248,7 @@ begin
                                 SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
                               Get_TEK_By_Id  =>
                                 SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access,
-                              others  => <>));
+                              others  => <>), Server_Pool.Handshakes);
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;
                         Dummy := Epoll_Ctl (Epfd, EPOLL_CTL_ADD,

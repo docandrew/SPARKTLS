@@ -10,22 +10,15 @@ is
    --  server begins by waiting for a ClientHello rather than
    --  sending one.
    --
-   --  Usage (blocking):
+   --  Usage (blocking). SPARKTLS.RBG.Init has run, and Handshakes is a
+   --  library-level SPARKTLS.Handshake_Pool (see Handshake_Pool):
    --
-   --    S   : SPARKTLS.Session;
-   --    Cfg : SPARKTLS.Config := (Random => My_RNG'Access, ...);
+   --    Cfg : SPARKTLS.Config := (Local => My_Identity, others => <>);
+   --    S   : SPARKTLS.Session := SPARKTLS.Server.Configure (Cfg, Handshakes);
    --    Res : SPARKTLS.Action;
-   --    Buf : Byte_Seq (0 .. 16383);
-   --    N   : N32;
-   --
-   --    SPARKTLS.Server.Init
-   --      (S        => S,
-   --       Cfg      => Cfg,
-   --       Cert_DER => My_Cert_Bytes,
-   --       Key      => My_Ed25519_Private_Key);
    --
    --    loop
-   --       SPARKTLS.Server.Advance (S, Res);
+   --       SPARKTLS.Server.Advance (S, Handshakes, Res);
    --       case Res is
    --          when Has_Output  => drain + send
    --          when Need_Input  => read + feed
@@ -35,6 +28,10 @@ is
    --          when others => null;
    --       end case;
    --    end loop;
+   --
+   --  If the transport closes or times out before Advance reports
+   --  Handshake_Done or Error_Alert, call SPARKTLS.Drop (S, Handshakes) to
+   --  return the session's slot to the pool.
    ----------------------------------------------------------------------------
 
    ----------------------------------------------------------------------------
@@ -44,9 +41,9 @@ is
    --  Sets Mode_WebPKI.
    --  Optionally provide a Trust store and Request_Client_Cert for mTLS.
    --
-   --  Side_Effects: allocate from the available Handshake Context (HC) pool
+   --  Side_Effects: takes a slot from Pool (see Handshake_Pool)
    ----------------------------------------------------------------------------
-   function Configure (Cfg : Config) return Session
+   function Configure (Cfg : Config; Pool : in out Handshake_Pool) return Session
    with
      Side_Effects,
      Pre  => Cfg.Local.Has_Identity,
@@ -93,7 +90,7 @@ is
    --    Plaintext_Ready decrypted app data available
    --    Shutdown        clean close complete, state = Closed
    --    Error_Alert     fatal error, alert was sent, state = Closed
-   procedure Advance (S : in out Server_Session; Result : out Action)
+   procedure Advance (S : in out Server_Session; Pool : in out Handshake_Pool; Result : out Action)
      --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
      --  Server_Session subtype constrains the discriminant, so it is now
      --  UNSTATEABLE rather than merely required.
