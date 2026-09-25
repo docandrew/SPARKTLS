@@ -148,15 +148,21 @@ run_one ct_key_schedule      0  || fail=1
 run_one ct_rfc6979           0  || fail=1
 run_one ct_hmac              0  || fail=1
 run_one ct_rsa_sign_plain    0  || fail=1
-#  ct_rsa_sign_crt: exactly THREE classified sites, all one decision --
+#  ct_rsa_sign_crt: exactly TWO classified sites, both one decision --
 #  the verify-after-sign check in RSA_Private_Fast (a constant-time
 #  compare of two PUBLIC outputs, signature and padded message, whose
 #  bytes nevertheless derive from the poisoned key) and the propagation
-#  of its Boolean through Sign_PSS's OK and the harness's print of it.
-#  Reported as seen, not masked. Any other count is a regression: more
-#  means a new key-dependent branch; fewer means the poison stopped
-#  reaching the signer.
-run_one ct_rsa_sign_crt      3 exact || fail=1
+#  of its Boolean through Sign_PSS's OK. Reported as seen, not masked.
+#  Any other count is a regression: more means a new key-dependent
+#  branch; fewer means the poison stopped reaching the signer.
+#  Re-triaged 2026-09-25 for SPARKTLSCrypto built with -fno-tree-vrp:
+#  there were three sites, the third the harness's print of OK
+#  (ct_rsa_sign_crt.adb:165). Without value-range propagation Sign_PSS
+#  sets OK through its branch at the second site, so the harness receives
+#  a defined value; the two library sites (sparktlscrypto-rsa.adb:1202
+#  and :1291) are unchanged. SPARKTLSCrypto's own ctgrind lane carries
+#  the same classification.
+run_one ct_rsa_sign_crt      2 exact || fail=1
 
 echo ""
 if [ "$fail" -eq 0 ]; then
