@@ -2,6 +2,8 @@
 --  any prefix, including zero bytes for backpressure. It must not retain the
 --  span or access/mutate S through another alias while the call is active.
 --  The span uses the session's native byte type and may start above index 1.
+--  If the callback raises after accepting bytes, fail the transport; retrying
+--  would resend an unknown prefix. Exceptions cannot roll back transport I/O.
 --  Use Drain_Ciphertext when ownership of a copied buffer is needed instead.
 generic
    with procedure Send (Data : in RBT_A.Bytes; Sent : out N32)
