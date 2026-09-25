@@ -175,7 +175,11 @@ is
       Inner_Type : in Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
-      Bytes_Out  : out N32)
+      Bytes_Out  : out N32;
+      Prepared   : in SPARKTLSCrypto.AES_GCM.Prepared_Key :=
+        SPARKTLSCrypto.AES_GCM.Unprepared_Key)
+      --  If supplied, Prepared must describe Keys.Key and Keys.Suite.
+      --  Session owns and invalidates that cache; counters stay in Keys.
       --  Relaxed 2026-04-29: the body uses Ada slide-assignment to copy
       --  Plaintext into a 0-based local Inner buffer, so any First works.
       --  Length-based bound replaces the prior absolute-Last bound so a

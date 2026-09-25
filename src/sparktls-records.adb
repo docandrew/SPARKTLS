@@ -316,7 +316,9 @@ is
       Inner_Type : in Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
-      Bytes_Out  : out N32)
+      Bytes_Out  : out N32;
+      Prepared   : in SPARKTLSCrypto.AES_GCM.Prepared_Key :=
+        SPARKTLSCrypto.AES_GCM.Unprepared_Key)
    is
       Inner_Len : constant N32 := N32 (Plaintext'Length) + 1;
       Enc_Len   : constant N32 := Inner_Len + Tag_Size;
@@ -378,6 +380,16 @@ is
          Output.Storage (Ix (Tag_Pos - 1)) := Inner_Type;
 
          --  Encrypt in place + compute tag, slice-aware.
+         if SPARKTLSCrypto.AES_GCM.Is_Prepared (Prepared) then
+            SPARKTLS.AEAD_InPlace.GCM_Encrypt_Prepared
+              (Storage  => Output.Storage,
+               CT_First => Ix (CT_Pos),
+               CT_Last  => Ix (Tag_Pos - 1),
+               Tag      => Tag,
+               Nonce    => Nonce,
+               Context  => Prepared,
+               AAD      => Hdr);
+         else
          case Keys.Suite is
             when Suite_AES_128_GCM_SHA256 =>
                declare
@@ -420,6 +432,7 @@ is
                   Key      => SPARKNaCl.Core.Construct (Keys.Key),
                   AAD      => Hdr);
          end case;
+         end if;
 
          --  Tag at [Tag_Pos .. Tag_Pos + 15]
          for I in 0 .. 15 loop

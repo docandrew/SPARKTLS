@@ -1852,6 +1852,7 @@ is
       S.Exporter_Client_Random := S.HC.Client_Random;
       S.Exporter_Server_Random := S.HC.Server_Random;
       S.HC.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_App_Sec));
+      SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
       Set_Traffic_Keys (S.Client_App, Bytes_48 (Byte_Seq (Client_App_Sec)), S.Negotiated_Suite);
       Set_Traffic_Keys (S.Server_App, Bytes_48 (Byte_Seq (Server_App_Sec)), S.Negotiated_Suite);
 
@@ -1932,6 +1933,7 @@ is
       begin
          CS48 (0 .. 31) := Bytes_32 (Byte_Seq (Client_App_Sec));
          SS48 (0 .. 31) := Bytes_32 (Byte_Seq (Server_App_Sec));
+         SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
          Set_Traffic_Keys (S.Client_App, CS48, S.Negotiated_Suite);
          Set_Traffic_Keys (S.Server_App, SS48, S.Negotiated_Suite);
 

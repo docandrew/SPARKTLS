@@ -108,4 +108,32 @@ is
         & " cke=" & Boolean'Image (S.HC.CKE_Received_12) & "]";
    end T12_Flags;
 
+   procedure Install_Test_Traffic (S : in out Session; Suite : Supported_Suite) is
+   begin
+      SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
+      S.State := Connected;
+      S.Version := TLS_1_3;
+      S.Negotiated_Suite := Suite;
+      S.Client_App := (Key => (others => 17), IV => (others => 19),
+                       Counter => 0, Suite => Suite);
+      S.Server_App := (Key => (others => 37), IV => (others => 39),
+                       Counter => 0, Suite => Suite);
+      S.Client_App_Secret := (others => 43);
+      S.Server_App_Secret := (others => 47);
+      S.App_Secret_Len := (if Suite = Suite_AES_256_GCM_SHA384 then 48 else 32);
+   end Install_Test_Traffic;
+
+   function Write_Keys (S : Session) return Traffic_Keys is
+     (if S.Role = Role_Client then S.Client_App else S.Server_App);
+
+   function Write_Cache_Erased (S : Session) return Boolean is
+      use type SPARKTLSCrypto.AES_GCM.Prepared_Key;
+   begin
+      return S.Write_GCM = SPARKTLSCrypto.AES_GCM.Unprepared_Key;
+   end Write_Cache_Erased;
+
+   procedure Fill_Output (S : in out Session) is
+   begin
+      S.Output.Write_Pos := IO_Buffer_Capacity;
+   end Fill_Output;
 end SPARKTLS.Test_Support;
