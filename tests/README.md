@@ -117,6 +117,17 @@ application's loop has to. Its variables:
     SPARKTLS_HANDSHAKE_TIMEOUT=S  seconds from accept to handshake done (10)
     SPARKTLS_IDLE_TIMEOUT=S       seconds between requests (60)
 
+`tls_web_uring` is the same server on Linux io_uring: completion-based I/O
+in place of readiness, through `examples/io_uring.ads`, a pure-Ada binding
+to the kernel interface (no liburing, no C). It takes the same arguments
+and variables, and needs Linux 6.4 or later with io_uring enabled; the
+integration lane skips it where the kernel refuses a ring. Each worker
+keeps one accept outstanding on the shared listening socket only while it
+has room, and each connection receives into its own buffer, so memory is
+fixed at start-up as in the epoll server. `uring_selftest` exercises the
+binding alone (accept, receive, send) as an echo server on the port given
+as its argument; `tests/integration/echo_check.py` drives it.
+
 ## Adding a unit test program
 
 Add the main to `tests/unit/unit_tests.gpr`; `run_all.sh` picks it up from
