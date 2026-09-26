@@ -36,17 +36,14 @@ with Ada.Exceptions;
 with Ada.Streams;           use Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Deallocation;
-with Ada.Calendar;
 with Ada.Environment_Variables;
 with GNAT.OS_Lib;
 with Ada.Real_Time;
-with Ada.Calendar.Formatting;
 with Interfaces;            use Interfaces;
 with Interfaces.C;          use Interfaces.C;
 with System;
 
 with SPARKNaCl;             use SPARKNaCl;
-with X509;
 with SPARKTLS;              use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
@@ -65,28 +62,6 @@ procedure TLS_Web_Epoll is
    begin
       Dummy := C_Write (1, Text'Address, Text'Length);
    end Log;
-
-   function Current_Time return X509.Date_Time is
-      use Ada.Calendar;
-      Now : constant Time := Clock;
-      Y   : Year_Number;
-      Mo  : Month_Number;
-      D   : Day_Number;
-      Hr  : Ada.Calendar.Formatting.Hour_Number;
-      Mn  : Ada.Calendar.Formatting.Minute_Number;
-      Sc  : Ada.Calendar.Formatting.Second_Number;
-      SS  : Ada.Calendar.Formatting.Second_Duration;
-   begin
-      --  Ada.Calendar.Split works in package Calendar's implementation-
-      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
-      --  UTC, so a local split shifts every validity comparison by the
-      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
-      --  UTC one.
-      Ada.Calendar.Formatting.Split
-        (Now, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
-      return (Year   => Y, Month => Mo, Day => D,
-              Hour   => Hr, Minute => Mn, Second => Sc);
-   end Current_Time;
 
    --  To_C_Buf / From_C_Buf removed 2026-04-30. SPARKNaCl.Byte is just
    --  `subtype Byte is Unsigned_8`, so Byte_Seq has identical memory
@@ -193,37 +168,6 @@ procedure TLS_Web_Epoll is
          end if;
          return null;
    end Read_File;
-
-   --  Build HTTP response
-   function HTTP_Response (Status : String; Content_Type : String;
-                           Payload : Byte_Seq) return Byte_Seq
-   is
-      Header : constant String :=
-         "HTTP/1.1 " & Status & ASCII.CR & ASCII.LF &
-         "Content-Type: " & Content_Type & ASCII.CR & ASCII.LF &
-         "Content-Length:" & Payload'Length'Image & ASCII.CR & ASCII.LF &
-         "Connection: close" & ASCII.CR & ASCII.LF &
-         ASCII.CR & ASCII.LF;
-      Result : Byte_Seq (0 .. N32 (Header'Length) + N32 (Payload'Length) - 1);
-   begin
-      for I in Header'Range loop
-         Result (N32 (I - Header'First)) :=
-            SPARKNaCl.Byte (Character'Pos (Header (I)));
-      end loop;
-      Result (N32 (Header'Length) .. Result'Last) := Payload;
-      return Result;
-   end HTTP_Response;
-
-   function HTTP_404 return Byte_Seq is
-      Payload : constant String := "404 Not Found";
-      Resp : Byte_Seq (0 .. N32 (Payload'Length) - 1);
-   begin
-      for I in Payload'Range loop
-         Resp (N32 (I - Payload'First)) :=
-            SPARKNaCl.Byte (Character'Pos (Payload (I)));
-      end loop;
-      return HTTP_Response ("404 Not Found", "text/plain", Resp);
-   end HTTP_404;
 
    --  Put the next part of Data, from offset From, into the session.
    --  Write_Plaintext takes its plaintext indexed from 0 (its precondition
@@ -739,7 +683,6 @@ procedure TLS_Web_Epoll is
                                           Hdr_Bytes : Byte_Seq
                                              (0 .. N32 (Hdr_Str'Length) - 1);
                                           Written : N32;
-                                          Wr : long;
                                        begin
                                           for I in Hdr_Str'Range loop
                                              Hdr_Bytes (N32 (I - Hdr_Str'First)) :=
@@ -787,9 +730,15 @@ procedure TLS_Web_Epoll is
                   exit;
 
                when SPARKTLS.Error_Alert =>
+                  --  The library has queued the fatal alert: send it, then
+                  --  close. (Closing at once dropped the alert unsent
+                  --  before 2026-09-26.)
                   Log ("  TLS error: " &
                      SPARKTLS.Describe (SPARKTLS.Last_Error (Conn.S)));
-                  Conn.State := Closed;
+                  Conn.Body_Ref := null;
+                  Conn.Close_Queued := True;
+                  Conn.State := Sending;
+                  Pump_Send (Idx);
                   exit;
 
                when others =>
@@ -991,9 +940,10 @@ begin
    --  A peer that closes before we finish writing must not kill the
    --  process (write(2) raises SIGPIPE; GNAT.Sockets is not used here).
    declare
-      Old_Handler : System.Address;
+      Old_Handler : constant System.Address := C_Signal (SIGPIPE, SIG_IGN);
+      pragma Unreferenced (Old_Handler);
    begin
-      Old_Handler := C_Signal (SIGPIPE, SIG_IGN);
+      null;
    end;
 
    --  The listening socket, shared by every worker.
@@ -1030,12 +980,13 @@ begin
 
    --  Start the workers. Their access type is declared in this procedure,
    --  so the procedure is their master and does not return while they run.
-   declare
-      W : Worker_Access;
-   begin
-      for N in 1 .. Workers loop
-         W := new Worker (N);
-      end loop;
-   end;
+   for N in 1 .. Workers loop
+      declare
+         W : constant Worker_Access := new Worker (N);
+         pragma Unreferenced (W);
+      begin
+         null;
+      end;
+   end loop;
    Log ("Ready. Waiting for connections...");
 end TLS_Web_Epoll;

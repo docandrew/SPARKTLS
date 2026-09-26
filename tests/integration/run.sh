@@ -117,67 +117,127 @@ cleanup
 # The event-driven example must impose the deadline itself: a client that
 # sends a few bytes and stalls holds a connection slot and a handshake
 # slot until SPARKTLS_HANDSHAKE_TIMEOUT expires and the server Drops it.
-echo "--- Silent clients: epoll server handshake deadline ---"
-WEB_EPOLL="$REPO_ROOT/bin/examples/tls_web_epoll"
-if [ -x "$WEB_EPOLL" ]; then
+# The event-driven reference servers, tls_web_epoll and tls_web_uring, run
+# the same cases: a deadline for silent clients, a large file served intact,
+# parallel clients on several workers, and admission control.
+web_server_cases() {  # label binary
+    local label=$1 bin=$2
+
+    # The library is sans-I/O: only the application's handshake deadline
+    # frees a connection whose peer sends a few bytes and stalls.
+    echo "--- $label: silent clients, handshake deadline ---"
     cleanup
-    SPARKTLS_HANDSHAKE_TIMEOUT=2 "$WEB_EPOLL" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" > /tmp/epoll_deadline.log 2>&1 &
+    SPARKTLS_HANDSHAKE_TIMEOUT=2 "$bin" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" > /tmp/${label}_deadline.log 2>&1 &
     sleep 1
     python3 "$DIR/silent_connections.py" "$PORT" 20 4 >/dev/null 2>&1
     output=$(echo | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 || true)
-    if echo "$output" | grep -q "Cipher is TLS" && grep -q "handshake timeout" /tmp/epoll_deadline.log; then
-        pass "epoll server drops silent clients at the handshake deadline and keeps serving"
+    if echo "$output" | grep -q "Cipher is TLS" && grep -q "handshake timeout" /tmp/${label}_deadline.log; then
+        pass "$label drops silent clients at the handshake deadline and keeps serving"
     else
-        fail "epoll server drops silent clients at the handshake deadline and keeps serving"
-        grep -c "handshake timeout" /tmp/epoll_deadline.log | sed 's/^/    timeouts logged: /'
+        fail "$label drops silent clients at the handshake deadline and keeps serving"
+        grep -c "handshake timeout" /tmp/${label}_deadline.log | sed 's/^/    timeouts logged: /'
     fi
     cleanup
 
-    # Worker tasks: each an epoll loop with its own connection table and
+    # A response many TLS records long arrives intact. Every body over one
+    # record broke before 2026-09-24 (Write_Plaintext's plaintext must be
+    # indexed from 0).
+    echo "--- $label: 5 MB file served intact ---"
+    cleanup
+    local root=/tmp/${label}_docroot
+    rm -rf "$root"; mkdir -p "$root"
+    head -c 5000000 /dev/urandom > "$root/big.bin"
+    "$bin" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" "$root" > /tmp/${label}_big.log 2>&1 &
+    sleep 1
+    timeout 30 curl -sk "https://127.0.0.1:$PORT/big.bin" -o /tmp/${label}_big.dl || true
+    if cmp -s "$root/big.bin" /tmp/${label}_big.dl; then
+        pass "$label serves a 5 MB file intact"
+    else
+        fail "$label serves a 5 MB file intact ($(stat -c %s /tmp/${label}_big.dl 2>/dev/null || echo 0) bytes received)"
+    fi
+    rm -rf "$root" /tmp/${label}_big.dl
+    cleanup
+
+    # Worker tasks: each an event loop with its own connection table and
     # handshake pool, sharing one listening socket. Every one of a burst
     # of parallel clients must complete its handshake.
-    echo "--- epoll server: four workers, parallel clients ---"
+    echo "--- $label: four workers, parallel clients ---"
     cleanup
-    SPARKTLS_WORKERS=4 "$WEB_EPOLL" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/epoll_workers.log 2>&1 &
+    SPARKTLS_WORKERS=4 "$bin" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/${label}_workers.log 2>&1 &
     sleep 1
-    client_pids=()
+    local client_pids=() i done_count
     for i in $(seq 1 16); do
-        (echo | timeout 10 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 | grep -c "Cipher is TLS" > /tmp/epoll_worker_client_$i.out) &
+        (echo | timeout 10 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 | grep -c "Cipher is TLS" > /tmp/${label}_worker_client_$i.out) &
         client_pids+=($!)
     done
     wait "${client_pids[@]}" 2>/dev/null
-    done_count=$(cat /tmp/epoll_worker_client_*.out 2>/dev/null | paste -sd+ | bc)
-    rm -f /tmp/epoll_worker_client_*.out
-    if grep -q "Workers: 4" /tmp/epoll_workers.log && [ "${done_count:-0}" = 16 ]; then
-        pass "epoll server with 4 workers completes 16 parallel handshakes"
+    done_count=$(cat /tmp/${label}_worker_client_*.out 2>/dev/null | paste -sd+ | bc)
+    rm -f /tmp/${label}_worker_client_*.out
+    if grep -q "Workers: 4" /tmp/${label}_workers.log && [ "${done_count:-0}" = 16 ]; then
+        pass "$label with 4 workers completes 16 parallel handshakes"
     else
-        fail "epoll server with 4 workers completes 16 parallel handshakes (${done_count:-0}/16)"
+        fail "$label with 4 workers completes 16 parallel handshakes (${done_count:-0}/16)"
     fi
     cleanup
 
-    # Admission control: a worker watches the listening socket only while
-    # it has a free connection entry and a free handshake slot. With both
-    # workers full of silent clients, a real client waits in the backlog --
-    # it is not accepted and refused -- and is served once the handshake
+    # Admission control: a worker takes a connection only while it has a
+    # free connection entry and a free handshake slot. With both workers
+    # full of silent clients, a real client waits in the backlog -- it is
+    # not accepted and refused -- and is served once the handshake
     # deadline frees an entry.
-    echo "--- epoll server: full workers queue new connections ---"
+    echo "--- $label: full workers queue new connections ---"
     cleanup
     SPARKTLS_WORKERS=2 SPARKTLS_MAX_CONNECTIONS=1 SPARKTLS_HANDSHAKE_SLOTS=1 SPARKTLS_HANDSHAKE_TIMEOUT=2 \
-        "$WEB_EPOLL" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/epoll_admission.log 2>&1 &
+        "$bin" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/${label}_admission.log 2>&1 &
     sleep 1
     python3 "$DIR/silent_connections.py" "$PORT" 2 6 >/dev/null 2>&1 &
-    silent_pid=$!
+    local silent_pid=$!
     sleep 0.5
     output=$(echo | timeout 10 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 || true)
     wait $silent_pid 2>/dev/null
-    if echo "$output" | grep -q "Cipher is TLS" && [ "$(grep -c "handshake timeout" /tmp/epoll_admission.log)" -ge 2 ]; then
-        pass "epoll server queues a connection while full and serves it when a slot frees"
+    if echo "$output" | grep -q "Cipher is TLS" && [ "$(grep -c "handshake timeout" /tmp/${label}_admission.log)" -ge 2 ]; then
+        pass "$label queues a connection while full and serves it when a slot frees"
     else
-        fail "epoll server queues a connection while full and serves it when a slot frees"
+        fail "$label queues a connection while full and serves it when a slot frees"
     fi
     cleanup
+}
+
+WEB_EPOLL="$REPO_ROOT/bin/examples/tls_web_epoll"
+if [ -x "$WEB_EPOLL" ]; then
+    web_server_cases epoll-server "$WEB_EPOLL"
 else
     echo "  (skipped: tls_web_epoll not built)"
+fi
+
+# io_uring needs Linux 6.4 or later with io_uring enabled; where the kernel
+# refuses a ring the server says so and these cases are skipped.
+WEB_URING="$REPO_ROOT/bin/examples/tls_web_uring"
+URING_SELFTEST="$REPO_ROOT/bin/examples/uring_selftest"
+if [ -x "$WEB_URING" ] && [ -x "$URING_SELFTEST" ]; then
+    cleanup
+    "$WEB_URING" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" > /tmp/uring_probe.log 2>&1 &
+    sleep 1
+    cleanup
+    if grep -q "io_uring_setup failed" /tmp/uring_probe.log; then
+        echo "  (skipped: this kernel refuses io_uring)"
+    else
+        # The binding on its own: accept, receive into a connection buffer
+        # and send, echoing a 2 MB stream sent in random-sized pieces.
+        echo "--- io_uring binding: echo self-test ---"
+        cleanup
+        "$URING_SELFTEST" "$PORT" > /tmp/uring_selftest.log 2>&1 &
+        sleep 0.5
+        if python3 "$DIR/echo_check.py" "$PORT" 2000000 && grep -q "PASS nop round trip" /tmp/uring_selftest.log; then
+            pass "io_uring binding echoes 2 MB intact"
+        else
+            fail "io_uring binding echoes 2 MB intact"
+        fi
+        cleanup
+        web_server_cases uring-server "$WEB_URING"
+    fi
+else
+    echo "  (skipped: tls_web_uring not built)"
 fi
 
 # ===================================================================
