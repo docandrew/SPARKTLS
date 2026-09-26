@@ -1,3 +1,4 @@
+with SPARKNaCl.AES;
 with SPARKTLS.Records;
 with SPARKTLS.HS_Pool;
 with SPARKTLS.Records.TLS12;
@@ -327,6 +328,7 @@ is
             return;   --  no room; retry on the next write
 
          end if;
+         SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
          Key_Update.Update_Secret
            (S.Client_App_Secret, S.App_Secret_Len, S.Client_App, S.Negotiated_Suite);
       else
@@ -339,6 +341,7 @@ is
          if Sent = 0 then
             return;
          end if;
+         SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
          Key_Update.Update_Secret
            (S.Server_App_Secret, S.App_Secret_Len, S.Server_App, S.Negotiated_Suite);
       end if;
@@ -426,6 +429,33 @@ is
          Flush_Pending_Key_Update (S);
       end if;
 
+      if S.Version = TLS_1_3
+        and then not SPARKTLSCrypto.AES_GCM.Is_Prepared (S.Write_GCM)
+      then
+         declare
+            Keys : constant Traffic_Keys :=
+              (if S.Role = Role_Client then S.Client_App else S.Server_App);
+         begin
+            case Keys.Suite is
+               when Suite_AES_128_GCM_SHA256 =>
+                  declare
+                     K : AES.AES128_Key := AES.Construct (Keys.Key (0 .. 15));
+                  begin
+                     SPARKTLSCrypto.AES_GCM.Prepare_128 (S.Write_GCM, K);
+                     AES.Sanitize (K);
+                  end;
+               when Suite_AES_256_GCM_SHA384 =>
+                  declare
+                     K : AES.AES256_Key := AES.Construct (Keys.Key);
+                  begin
+                     SPARKTLSCrypto.AES_GCM.Prepare_256 (S.Write_GCM, K);
+                     AES.Sanitize (K);
+                  end;
+               when others => null;
+            end case;
+         end;
+      end if;
+
       while Pos < Total loop
          pragma
            Loop_Invariant
@@ -455,14 +485,14 @@ is
             end if;
          end if;
 
-         declare
-            Frag_Len : constant N32 := Chunk;
-            Frag     : Byte_Seq (0 .. Frag_Len - 1);
-         begin
-            Frag := Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Frag_Len - 1);
-
-            if S.Role = Role_Client then
-               if S.Version = TLS_1_2 then
+         if S.Version = TLS_1_2 then
+            --  TLS 1.2's builder still requires a zero-based buffer.
+            declare
+               Frag_Len : constant N32 := Chunk;
+               Frag : constant Byte_Seq (0 .. Frag_Len - 1) :=
+                 Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Chunk - 1);
+            begin
+               if S.Role = Role_Client then
                   Records.TLS12.Build_Encrypted_Record_12
                     (Plaintext    => Frag,
                      Content_Type => 16#17#,
@@ -471,15 +501,6 @@ is
                      Output       => S.Output,
                      Bytes_Out    => Enc_Out);
                else
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => Frag,
-                     Inner_Type => 16#17#,
-                     Keys       => S.Client_App,
-                     Output     => S.Output,
-                     Bytes_Out  => Enc_Out);
-               end if;
-            else
-               if S.Version = TLS_1_2 then
                   Records.TLS12.Build_Encrypted_Record_12
                     (Plaintext    => Frag,
                      Content_Type => 16#17#,
@@ -487,16 +508,29 @@ is
                      Implicit_IV  => S.Server_IV_12,
                      Output       => S.Output,
                      Bytes_Out    => Enc_Out);
-               else
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => Frag,
-                     Inner_Type => 16#17#,
-                     Keys       => S.Server_App,
-                     Output     => S.Output,
-                     Bytes_Out  => Enc_Out);
                end if;
+            end;
+         else
+            --  TLS 1.3 accepts the original slice. The record builder
+            --  copies it into Output before encrypting in place.
+            if S.Role = Role_Client then
+               Records.Build_Encrypted_Record
+                 (Plaintext  => Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Chunk - 1),
+                  Inner_Type => 16#17#,
+                  Keys       => S.Client_App,
+                  Output     => S.Output,
+                  Bytes_Out  => Enc_Out,
+                  Prepared   => S.Write_GCM);
+            else
+               Records.Build_Encrypted_Record
+                 (Plaintext  => Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Chunk - 1),
+                  Inner_Type => 16#17#,
+                  Keys       => S.Server_App,
+                  Output     => S.Output,
+                  Bytes_Out  => Enc_Out,
+                  Prepared   => S.Write_GCM);
             end if;
-         end;
+         end if;
 
          exit when Enc_Out = 0;
          Pos := Pos + Chunk;
@@ -507,6 +541,7 @@ is
 
    procedure Sanitize_Keys (S : in out Session) is
    begin
+      SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
       --  Traffic keys (both directions), counters included
       S.Client_App.Key := (others => 0);
       S.Client_App.IV := (others => 0);

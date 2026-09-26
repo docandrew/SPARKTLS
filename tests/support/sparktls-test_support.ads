@@ -104,4 +104,9 @@ is
    --  TLS 1.2 resumption bookkeeping, for the BoGo shim trace.
    function T12_Flags (S : Session) return String;
 
+   --  Prepared-write regression helpers; never shipped with the library.
+   procedure Install_Test_Traffic (S : in out Session; Suite : Supported_Suite);
+   function Write_Keys (S : Session) return Traffic_Keys;
+   function Write_Cache_Erased (S : Session) return Boolean;
+   procedure Fill_Output (S : in out Session);
 end SPARKTLS.Test_Support;

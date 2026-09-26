@@ -9,6 +9,7 @@ with RFLX.RFLX_Builtin_Types;
 with X509;
 with X509.CRL;
 with SPARKTLSCrypto.RSA;
+with SPARKTLSCrypto.AES_GCM;
 with MLKEM.ML_KEM_768;
 
 package SPARKTLS
@@ -3399,6 +3400,11 @@ private
       --  Application traffic keys (set during handshake, used after)
       Client_App : Traffic_Keys;
       Server_App : Traffic_Keys;
+
+      --  TLS 1.3 application WRITE key only. Prepared lazily, invalidated
+      --  before every application-key installation and successful local
+      --  KeyUpdate, and erased by Sanitize_Keys. It holds no nonce/counter.
+      Write_GCM : SPARKTLSCrypto.AES_GCM.Prepared_Key;
 
       --  Decrypted application data staging area
       App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1) := (others => 0);

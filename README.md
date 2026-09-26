@@ -262,6 +262,33 @@ nix develop --command bash ci/prove.sh -u sparktls-client.adb   # one unit
 `cli/` directory holds `sparktls_cli`, a development tool for generating
 keys, certificates and CSRs and for inspecting and verifying chains.
 
+## Acknowledgements
+
+Thank you to Chris Allen ([@bitemyapp](https://github.com/bitemyapp)) for a
+set of performance and constant-time contributions, each with differential
+test and benchmark evidence.
+
+In SparkTLS:
+
+- Prepared AES-GCM keys reused for TLS 1.3 application writes
+- TLS 1.3 plaintext passed to the record builder without a staging copy
+- `Send_Ciphertext`, which sends queued ciphertext directly through a scoped
+  transport callback
+- Fixed-base X25519 for classical and hybrid key shares
+
+In [SPARKTLSCrypto](https://github.com/docandrew/sparktlscrypto):
+
+- A precomputed fixed-base Curve25519 table, with a constant-time row scan and
+  cached mixed addition, for X25519 key generation and Ed25519 signing
+- Prepared AES-GCM keys
+- A shorter AVX-512 GHASH reduction
+- Fused sixteen-block VAES/GHASH
+- 64-bit carries in Curve25519 field multiplication
+- Removal of secret-dependent branches from the portable GHASH
+
+Chris also traced the GCC 14+ array-slice miscompile that led every crate to
+build its optimized modes with `-fno-tree-vrp`.
+
 ## Disclaimer
 
 SparkTLS is provided "as is" without any warranty. Use at your own risk.

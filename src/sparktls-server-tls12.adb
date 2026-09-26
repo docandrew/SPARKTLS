@@ -869,6 +869,7 @@ is
               when others                                                                  =>
                 Suite_CHACHA20_POLY1305_SHA256);
       begin
+         SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
          S.Client_App :=
            (Key => (others => 0), IV => (others => 0), Counter => 0, Suite => Int_Suite);
          S.Client_App.Key (0 .. Key_Len - 1) := CK;
@@ -1323,6 +1324,7 @@ is
       begin
          --  Verify the mapping matches the ghost function
 
+         SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
          S.Client_App :=
            (Key => (others => 0), IV => (others => 0), Counter => 0, Suite => Int_Suite);
          S.Client_App.Key (0 .. Key_Len - 1) := CK;

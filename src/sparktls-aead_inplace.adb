@@ -58,6 +58,22 @@ package body SPARKTLS.AEAD_InPlace with SPARK_Mode => Off is
         (Buf => Buf, Tag => Tag, N => Nonce, K => Key, AAD => AAD);
    end GCM_Encrypt_256;
 
+   procedure GCM_Encrypt_Prepared
+     (Storage  : in out RBT.Bytes;
+      CT_First : in     RBT.Index;
+      CT_Last  : in     RBT.Index;
+      Tag      :    out Bytes_16;
+      Nonce    : in     Bytes_12;
+      Context  : in     SPARKTLSCrypto.AES_GCM.Prepared_Key;
+      AAD      : in     Byte_Seq)
+   is
+      Buf : Byte_Seq (0 .. N32 (CT_Last) - N32 (CT_First))
+        with Import, Address => Storage (CT_First)'Address;
+   begin
+      SPARKTLSCrypto.AES_GCM.Encrypt_Prepared
+        (Buf => Buf, Tag => Tag, N => Nonce, Context => Context, AAD => AAD);
+   end GCM_Encrypt_Prepared;
+
    procedure ChaCha20_Poly1305_Encrypt
      (Storage  : in out RBT.Bytes;
       CT_First : in     RBT.Index;

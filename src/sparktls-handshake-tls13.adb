@@ -112,7 +112,6 @@ is
        and then HC.Server_Random = HC.Server_Random'Old
    is
       PK_Bytes  : Bytes_32;
-      Basepoint : constant Bytes_32 := (9, others => 0);
       Tmp_SK    : Bytes_32;
       Rand_OK   : Boolean;
    begin
@@ -127,7 +126,7 @@ is
       end if;
       HC.KE.Local_SK := Tmp_SK;
       Sanitize (Tmp_SK);
-      SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
+      SPARKTLSCrypto.X25519.Scalar_Mult_Base (PK_Bytes, HC.KE.Local_SK);
       SPARKTLSCrypto.X25519.Scalar_Mult (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
 
       --  RFC 7748 6.1 / RFC 8422 5.10: reject all-zero shared
@@ -343,7 +342,6 @@ is
        and then HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
        and then HC.Server_Random = HC.Server_Random'Old
    is
-      Basepoint : constant Bytes_32 := (9, others => 0);
       M         : Bytes_32;
       Rand_OK   : Boolean;
       SS        : MLKEM.Bytes_32;
@@ -377,7 +375,7 @@ is
       HC.KE.Shared := (others => 0);
       HC.KE.Shared (0 .. 31) := Bytes_32 (SS);
       MLKEM.Sanitize (SS);
-      SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Hybrid_SK, Basepoint);
+      SPARKTLSCrypto.X25519.Scalar_Mult_Base (PK_Bytes, HC.KE.Hybrid_SK);
       SPARKTLSCrypto.X25519.Scalar_Mult
         (HC.KE.Shared (32 .. 63), HC.KE.Hybrid_SK, HC.KE.Hybrid_Peer_PK);
       --  RFC 7748 6.1 small-subgroup defence on the X25519 half.

@@ -30,7 +30,7 @@ SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
 SPARKX509_REF="${SPARKX509_REF:-2a33ed8b68ca69aa6e3009d06a32c7ee8b89a352}"   # master 2026-09-24, PR #8 (build with -fno-tree-vrp)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-524385da79cee4e4a396d6456ed7c5c8188d09e6}"   # master 2026-09-24, PR #13 (-fno-tree-vrp, SPARKNaCl ^4.0.1, NOTICE attributions)
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-260ed193c074ddd4b46042cd490f06ae96198922}"   # master 2026-09-25, PR #14 (Chris Allen: fixed-base Curve25519, prepared AES-GCM, GHASH and VAES speedups)
 
 
 # ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).

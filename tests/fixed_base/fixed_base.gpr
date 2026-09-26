@@ -1,0 +1,11 @@
+with "../../sparktls.gpr";
+project Fixed_Base is
+   for Create_Missing_Dirs use "True";
+   for Source_Dirs use (".", "../../examples");
+   for Object_Dir use "obj";
+   for Exec_Dir use "bin";
+   for Main use ("test_fixed_base_handshake.adb");
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnata", "-gnato");
+   end Compiler;
+end Fixed_Base;
