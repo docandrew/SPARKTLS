@@ -129,7 +129,7 @@ is
      (Transcript_Capacity /= SPARKTLS_Reassembly.Max_HS_Msg,
       "Transcript_Capacity must equal SPARKTLS_Reassembly.Max_HS_Msg");
 
-   --  Size of the reusable RecordFlux handshake arena (one per HS_Pool slot).
+   --  Size of the reusable RecordFlux handshake arena (one per Handshake_Pool slot).
    --  Must be large enough for the biggest handshake message we build or parse
    --  through RecordFlux; Max_HS_Msg is exactly that protocol bound.
    RFLX_Arena_Size : constant N32 := 32768;
@@ -541,7 +541,7 @@ is
       Entropy_Failure,             --  the CSPRNG returned nothing (alert 80 on the wire)
       Insufficient_Buffer,
       Bad_Configuration,           --  Internal-only: Rejected configuration
-      No_Free_Sessions,            --  Internal-only: HS_Pool exhausted
+      No_Free_Sessions,            --  Internal-only: Handshake_Pool full
       Unsupported_Cipher_Suite);
 
    ----------------------------------------------------------------------------
@@ -1060,12 +1060,14 @@ is
    --  Session size) and made it impractical to hold many sessions in BSS
    --  or on the stack. The trust store uses a separate larger pool
    --  (Max_Root_Pool_Size = 200) since OS CA bundles have 130+ roots.
-   --  Handshake data-plane pool sizing (#106). Slot types live here so
-   --  Session can hold its slot; the pool itself is SPARKTLS.HS_Pool.
-   Max_Inflight : constant := 16;
-   type Slot_Count is range 0 .. Max_Inflight;
-   subtype Slot_Index is Slot_Count range 1 .. Max_Inflight;
-   No_Slot      : constant Slot_Count := 0;
+   --  Handshake data-plane slots (#106). Slot types live here so Session
+   --  can hold its slot. The pool itself is a Handshake_Pool the
+   --  application declares, with as many slots as it chooses up to
+   --  Max_Handshake_Slots (see Handshake_Pool below).
+   Max_Handshake_Slots : constant := 65_535;
+   type Slot_Count is range 0 .. Max_Handshake_Slots;
+   subtype Slot_Index is Slot_Count range 1 .. Max_Handshake_Slots;
+   No_Slot             : constant Slot_Count := 0;
 
    Max_Pool_Size : constant := 8;
    Max_Cert_DER  : constant := 8192;   --  max DER bytes per cert
@@ -2063,6 +2065,80 @@ is
    subtype PSK_Value_Length is N32 range 0 .. 48;
    subtype TLS12_Ticket_Length is N32 range 0 .. Max_TLS12_Ticket_Len;
 
+   ----------------------------------------------------------------------------
+   --  Handshake pool (#106)
+   --
+   --  A handshake's data-plane state -- reassembly buffer, peer certificate
+   --  chain, stapled OCSP response and RecordFlux arena -- lives in a slot
+   --  of a Handshake_Pool, not in the Session. A session
+   --  holds a slot only while its handshake is in flight: Configure takes
+   --  one, and Advance returns it when the handshake completes or fails
+   --  (Drop, when the application abandons the session). So the pool's
+   --  Size is the number of handshakes that can be in flight at once,
+   --  independent of how many connections are open; with every slot taken,
+   --  Configure refuses the next session with No_Free_Sessions instead of
+   --  allocating.
+   --
+   --  The application declares the pool, sized like a String:
+   --
+   --     Handshakes : SPARKTLS.Handshake_Pool (Size => 256);
+   --
+   --  and passes that object to Configure, Advance and Drop for every
+   --  session. Each slot is about 180 KB on x86_64 (RecordFlux arena,
+   --  reassembly buffer, peer certificate chain, stapled OCSP), all of it
+   --  initialised at start-up: 64 slots cost about 11.5 MB of memory whether
+   --  or not they are used. Declare the pool at library level (in a
+   --  package), not in a subprogram, so it is static storage rather than
+   --  stack, or allocate it once at start-up with new; either way nothing
+   --  is allocated while serving.
+   --
+   --  A pool is not task-safe: Configure, Advance and Drop update it
+   --  without a lock. Give each task (each event loop) its own pool, as the
+   --  sessions it drives are its own too; nothing else in SPARKTLS needs
+   --  one per task, because a Session holds all of a connection's state
+   --  and the library's only process-wide state (SPARKTLS.RBG, and
+   --  SPARKTLS.Ticket_Keys if used) is behind protected objects.
+   --
+   --  A session belongs to the pool it was configured with: pass that same
+   --  pool to its Advance and Drop. Its slot number means nothing in
+   --  another pool (Advance refuses a slot outside the pool it is given,
+   --  but cannot tell two pools of the same size apart).
+   ----------------------------------------------------------------------------
+
+   type HS_Data is record
+      Reasm          : SPARKTLS_Reassembly.Buffer;
+      Peer_Leaf      : Pool_Entry;
+      Peer_Ints      : Cert_Pool;
+      Peer_Int_Count : Cert_Pool_Count := 0;
+      --  Stapled OCSP response for the leaf (RFC 8446 4.4.2.1 CertificateEntry
+      --  status_request extension, or the TLS 1.2 CertificateStatus message).
+      --  Len = 0: none. Too_Big: the server stapled something over
+      --  Max_OCSP_Response bytes, treated as absent.
+      Stapled_OCSP     : X509.Byte_Seq (0 .. Max_OCSP_Response - 1) := (others => 0);
+      Stapled_OCSP_Len : X509.N32 range 0 .. Max_OCSP_Response := 0;
+      Stapled_Too_Big  : Boolean := False;
+      --  Reusable RecordFlux build/parse arena, INLINE (no heap). Handshake
+      --  builders hand it to RecordFlux via SPARKTLS.RFLX_Borrow.Borrow and
+      --  return it with Discard; the storage is part of the slot, so it
+      --  persists across handshakes for the pool's lifetime.
+      Arena_Storage  : aliased Arena_Bytes := (others => 0);
+   end record;
+
+   type Slot_Array is array (Slot_Index range <>) of HS_Data;
+   type Use_Map is array (Slot_Index range <>) of Boolean;
+
+   --  Limited: a pool is never copied (it is large, and a copy would
+   --  duplicate peer data). Its operations are in SPARKTLS.HS_Pool.
+   type Handshake_Pool (Size : Slot_Index) is limited record
+      Slots  : Slot_Array (1 .. Size);
+      In_Use : Use_Map (1 .. Size) := (others => False);
+   end record;
+
+   --  True when Configure would get a slot from Pool. For a server's
+   --  admission control: stop accepting connections while it is False.
+   function Has_Free_Slot (Pool : Handshake_Pool) return Boolean is
+     (for some I in Pool.In_Use'Range => not Pool.In_Use (I));
+
    --  Uncompressed EC point buffers for the peer's key_share (RFC 8446
    --  4.2.8.2): 0x04 || X || Y, so 65 bytes for P-256 and 97 for P-384.
    --  Named so Copy_P256_KS / Copy_P384_KS can take the buffer alone as an
@@ -2516,7 +2592,7 @@ is
    --  removes Handshake_Context from the task #60 class entirely.
 
    --  Heap budget accounting deleted with the heap itself (#106):
-   --  handshake memory is now bounded by the HS_Pool slot count.
+   --  handshake memory is now bounded by the Handshake_Pool's Size.
 
    --  ----- RFC 5246 7.4.7 single-ClientKeyExchange invariant ------
    --  TLS 1.2 7.4.7: the client sends exactly one ClientKeyExchange
@@ -3266,8 +3342,8 @@ is
    --  timeout fired, or the application is giving up on it. Advance frees
    --  the session's handshake slot only when the handshake completes or
    --  fails ON THE WIRE, so a session that is merely forgotten part-way
-   --  through keeps its slot in SPARKTLS.HS_Pool for the life of the
-   --  process, and Max_Inflight such sessions leave every later Configure
+   --  through keeps its slot in the Handshake_Pool for the life of the
+   --  process, and Pool.Size such sessions leave every later Configure
    --  failing with No_Free_Sessions and the server silently answering
    --  nothing (2026-09-14: TLS-Anvil's feature scan opens and drops one
    --  handshake per probe, and every test came back disabled).
@@ -3277,8 +3353,9 @@ is
    --  completed handshake it only zeroes the traffic keys, and on a session
    --  that never held a slot it is a scrub. Call it on every path that stops
    --  driving a session before Advance has reported Handshake_Done or an
-   --  error, on both client and server.
-   procedure Drop (S : in out Session)
+   --  error, on both client and server. Pool is the one the session was
+   --  configured with.
+   procedure Drop (S : in out Session; Pool : in out Handshake_Pool)
    with Post => State (S) = Closed;
 
    procedure Write_Plaintext (S : in out Session; Plaintext : in Byte_Seq; Bytes_Written : out N32)

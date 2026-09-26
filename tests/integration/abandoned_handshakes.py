@@ -5,8 +5,8 @@ Usage: abandoned_handshakes.py PORT [N]
 
 Models a scanner or a browser's speculative connection: the peer goes
 away after our first flight. Every such session must release its
-SPARKTLS.HS_Pool slot (Max_Inflight = 16), or the server stops answering
-anyone. The runner follows this with a normal connection that must work.
+handshake-pool slot, or the server stops answering anyone once the pool
+is full; N should exceed the server's pool size. The runner follows this with a normal connection that must work.
 Exit status 1 if any of the N handshakes did not get a ServerHello.
 """
 import os, socket, struct, sys

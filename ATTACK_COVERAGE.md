@@ -95,7 +95,7 @@ Status legend: **closed** = code prevents it and a test or proof shows so;
 | Attack class | Status | Mechanism | Evidence |
 |---|---|---|---|
 | Handshake-message reassembly bombs | closed | Handshake reassembly is capped at 32 KB; larger ClientHellos are decode_error; per-list DoS caps (`DoS_Caps`) bound cipher suites, groups, key shares and signature algorithms. | tlsfuzzer `large-hello`, `large-number-of-extensions`; TLS-Anvil `manyGroupsOffered`. |
-| Handshake-slot starvation | closed | 16 in-flight handshake contexts (`Max_Inflight`); `Drop` releases an abandoned session; the examples enforce handshake and idle deadlines. | `tests/integration/abandoned_handshakes.py`, `silent_connections.py`. |
+| Handshake-slot starvation | closed | In-flight handshakes bounded by the application's `Handshake_Pool` size; `Drop` releases an abandoned session; the examples enforce handshake and idle deadlines. | `tests/integration/abandoned_handshakes.py`, `silent_connections.py`. |
 | Certificate-chain bombs | closed | 8 intermediates (`Max_Pool_Size`), 8 KB per certificate (`Max_Cert_DER`); more is refused. | x509-limbo bettertls path-building cases (fail closed). |
 | Extension count / duplicate extensions | closed | Duplicates are illegal_parameter; a 65th extension is decode_error. | SR-38, SR-40; BoGo `DuplicateExtension*`. |
 

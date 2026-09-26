@@ -29,6 +29,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
+with Server_Pool;
 with Entropy_Random;
 
 with GNAT.Sockets;               use GNAT.Sockets;
@@ -226,10 +227,10 @@ procedure TLS_Authz_Server is
           Require_Client_Cert => True,
           Verify_Peer         => Authorize_Client'Unrestricted_Access,
           Get_Time            => Now_UTC'Unrestricted_Access,
-          others              => <>));
+          others              => <>), Server_Pool.Handshakes);
 
       loop
-         Server.Advance (S, Res);
+         Server.Advance (S, Server_Pool.Handshakes, Res);
 
          case Res is
             when Has_Output =>
@@ -300,13 +301,13 @@ procedure TLS_Authz_Server is
       --  Whatever ended the connection, give the handshake slot back
       --  (see SPARKTLS.Drop): a peer that disconnects after our
       --  ServerHello otherwise pins it for the life of the process.
-      SPARKTLS.Drop (S);
+      SPARKTLS.Drop (S, Server_Pool.Handshakes);
 
    exception
       when Socket_Error =>
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Server_Pool.Handshakes);
       when E : others =>
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Server_Pool.Handshakes);
          Put_Line ("  Connection error: " &
                    Ada.Exceptions.Exception_Message (E));
    end Handle_Connection;

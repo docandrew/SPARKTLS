@@ -116,7 +116,7 @@ is
    ----------------------------------------------------------------------------
    --  Configure
    ----------------------------------------------------------------------------
-   function Configure (Cfg : Config) return Session
+   function Configure (Cfg : Config; Pool : in out Handshake_Pool) return Session
    is
    begin
       return S : Server_Session :=
@@ -130,7 +130,7 @@ is
             S.Last_Error := Bad_Configuration;
          else
 
-            SPARKTLS.HS_Pool.Acquire (S.Slot);
+            SPARKTLS.HS_Pool.Acquire (Pool, S.Slot);
 
             if S.Slot = No_Slot then
                Set_State (S, Error_State);
@@ -268,18 +268,20 @@ is
       end case;
    end Advance_Server_Non_Handshake;
 
-   procedure Advance (S : in out Server_Session; Result : out Action) is
+   procedure Advance (S : in out Server_Session; Pool : in out Handshake_Pool; Result : out Action) is
       Handled : Boolean;
       --  Snapshot of the handshake slot. The handshake procedures below
       --  take S in out and never touch S.Slot, but that fact does not
       --  cross their call boundary; indexing Slots through a local
-      --  constant keeps the guard's S.Slot /= No_Slot structurally in
-      --  scope for every Slots (...) below, with no contract needed.
+      --  constant keeps the guard's slot-in-Pool check structurally in
+      --  scope for every Pool.Slots (...) below, with no contract needed.
       Slot    : constant Slot_Count := S.Slot;
    begin
       Advance_Server_Non_Handshake (S, Result, Handled);
       if not Handled then
-         if Slot = No_Slot then
+         --  No slot, or a slot this Pool does not have: the session was
+         --  configured with a different pool.
+         if Slot = No_Slot or else Slot > Pool.Size then
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -289,16 +291,16 @@ is
          --  ClientHello parsing is version-neutral. Once negotiation
          --  commits S.Version, dispatch only to that version's child.
          if S.State = Wait_Client_Hello then
-            Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (Slot), Result);
+            Advance_Handshake (S, Pool.Slots (Slot), Result);
          else
             case S.Version is
                when TLS_1_2          =>
                   SPARKTLS.Server.TLS12.Advance_Handshake_12
-                    (S, SPARKTLS.HS_Pool.Slots (Slot), Result);
+                    (S, Pool.Slots (Slot), Result);
 
                when TLS_1_3          =>
                   SPARKTLS.Server.TLS13.Advance_Handshake_13
-                    (S, SPARKTLS.HS_Pool.Slots (Slot), Result);
+                    (S, Pool.Slots (Slot), Result);
 
                when TLS_Undetermined =>
                   S.Last_Error := Internal_Error;
@@ -308,7 +310,7 @@ is
          end if;
 
          if S.State in Connected | Error_State | Closed then
-            S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (Slot).Peer_Leaf.Present;
+            S.Peer_Cert_Valid := Pool.Slots (Slot).Peer_Leaf.Present;
             S.Use_EMS := S.HC.Use_EMS;
             --  A handshake that failed leaves no connection behind:
             --  zero its key material and ticket secrets as well.
@@ -319,7 +321,7 @@ is
             --  Zero ALL key material, then free the slot (Release wipes
             --  the data-plane).
             Scrub_Handshake_Context (S.HC);
-            SPARKTLS.HS_Pool.Release (Slot);
+            SPARKTLS.HS_Pool.Release (Pool, Slot);
             S.Slot := No_Slot;
          end if;
       end if;

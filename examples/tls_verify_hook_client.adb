@@ -45,6 +45,7 @@ with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with Client_Pool;
 with Entropy_Random;
 with X509;
 
@@ -551,11 +552,11 @@ begin
        Select_Client_Identity =>
           (if Have_Alt then Pick_Identity'Unrestricted_Access else null),
        Skip_Hostname_Verify   => Cfg_Skip_Hostname_Verify,
-       others                 => <>));
+       others                 => <>), Client_Pool.Handshakes);
 
    Loop1 :
    loop
-      SPARKTLS.Client.Advance (S, Res);
+      SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
       case Res is
          when Has_Output =>
             Send_Pending;
@@ -612,7 +613,7 @@ begin
       end case;
    end loop Loop1;
    --  Whatever ended the loop, release the session (see SPARKTLS.Drop).
-   SPARKTLS.Drop (S);
+   SPARKTLS.Drop (S, Client_Pool.Handshakes);
 
    declare
       Success : constant Boolean := not Run_Failed

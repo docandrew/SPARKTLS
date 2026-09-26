@@ -362,16 +362,18 @@ is
       Flush_Pending_Key_Update (S);
    end Request_Key_Update;
 
-   procedure Drop (S : in out Session) is
+   procedure Drop (S : in out Session; Pool : in out Handshake_Pool) is
    begin
-      if S.Slot /= No_Slot then
+      --  A slot outside Pool belongs to another pool, which is not ours to
+      --  free; the session is scrubbed and closed all the same.
+      if S.Slot /= No_Slot and then S.Slot <= Pool.Size then
          --  Same order as the completion path in Server.Advance /
          --  Client.Advance: zero the handshake context (ephemeral keys,
          --  transcript, PSK material) before the slot is wiped and freed.
          Scrub_Handshake_Context (S.HC);
-         SPARKTLS.HS_Pool.Release (S.Slot);
-         S.Slot := No_Slot;
+         SPARKTLS.HS_Pool.Release (Pool, S.Slot);
       end if;
+      S.Slot := No_Slot;
       Sanitize_Keys (S);
       Scrub_Ticket_Secrets (S);
       Set_State (S, Closed);

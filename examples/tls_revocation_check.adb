@@ -45,6 +45,7 @@ with SPARKTLS;                use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
 with SPARKTLS.Revocation;
+with Client_Pool;
 with Entropy_Random;
 with X509;
 with X509.OCSP;
@@ -200,7 +201,7 @@ procedure TLS_Revocation_Check is
    procedure Rejected (Why : String) is
    begin
       Put_Line ("REJECTED: " & Why);
-      SPARKTLS.Drop (S);
+      SPARKTLS.Drop (S, Client_Pool.Handshakes);
       GNAT.Sockets.Close_Socket (Sock);
       Ada.Command_Line.Set_Exit_Status (1);
    end Rejected;
@@ -340,7 +341,7 @@ begin
                                   then CRL_Store'Unchecked_Access
                                   else null),
           Observe_Staple      => Observe_Staple'Unrestricted_Access,
-          others              => <>));
+          others              => <>), Client_Pool.Handshakes);
    end;
 
    Put_Line ("policy: " & SPARKTLS.Revocation_Policy'Image (Policy)
@@ -357,7 +358,7 @@ begin
    --    Bad_Certificate_Status_Response (113) the stapled response itself
    --                                         is unacceptable
    loop
-      SPARKTLS.Client.Advance (S, Res);
+      SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
       case Res is
          when SPARKTLS.OK =>
             null;   --  progress made; call Advance again
@@ -418,7 +419,7 @@ begin
                    & " (soft policy tolerates missing or unusable evidence;"
                    & " use --policy hard for assurance)");
    end case;
-   SPARKTLS.Drop (S);
+   SPARKTLS.Drop (S, Client_Pool.Handshakes);
    GNAT.Sockets.Close_Socket (Sock);
 
 exception

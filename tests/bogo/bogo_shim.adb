@@ -36,6 +36,7 @@ with X509;
 with GNAT.Sockets;               use GNAT.Sockets;
 with SPARKTLS.Test_Support;
 with SPARKTLS.Ticket_Keys;
+with Test_Pool;
 
 procedure Bogo_Shim is
 
@@ -1801,7 +1802,7 @@ procedure Bogo_Shim is
                   Server_Cfg.ALPN_Count := 1;
                end if;
 
-               S := SPARKTLS.Server.Configure (Server_Cfg);
+               S := SPARKTLS.Server.Configure (Server_Cfg, Test_Pool.Handshakes);
             end;
          end;
       else
@@ -1898,7 +1899,7 @@ procedure Bogo_Shim is
                   Client_Cfg.ALPN_List := Cfg.ALPN_List;
                end if;
 
-               S := SPARKTLS.Client.Configure (Client_Cfg);
+               S := SPARKTLS.Client.Configure (Client_Cfg, Test_Pool.Handshakes);
             end;
          end;
       end if;
@@ -1907,9 +1908,9 @@ procedure Bogo_Shim is
       --  Drive Advance until handshake completes or fails.
       loop
          if Cfg.Is_Server then
-            SPARKTLS.Server.Advance (S, Res);
+            SPARKTLS.Server.Advance (S, Test_Pool.Handshakes, Res);
          else
-            SPARKTLS.Client.Advance (S, Res);
+            SPARKTLS.Client.Advance (S, Test_Pool.Handshakes, Res);
          end if;
          Trace_Step ("handshake", S, Res);
          case Res is
@@ -2209,9 +2210,9 @@ procedure Bogo_Shim is
       Echo_Loop :
       loop
          if Cfg.Is_Server then
-            SPARKTLS.Server.Advance (S, Res);
+            SPARKTLS.Server.Advance (S, Test_Pool.Handshakes, Res);
          else
-            SPARKTLS.Client.Advance (S, Res);
+            SPARKTLS.Client.Advance (S, Test_Pool.Handshakes, Res);
          end if;
          Trace_Step ("application", S, Res);
          case Res is
@@ -2314,9 +2315,9 @@ procedure Bogo_Shim is
                Final_Res : SPARKTLS.Action;
             begin
                if Cfg.Is_Server then
-                  SPARKTLS.Server.Advance (S, Final_Res);
+                  SPARKTLS.Server.Advance (S, Test_Pool.Handshakes, Final_Res);
                else
-                  SPARKTLS.Client.Advance (S, Final_Res);
+                  SPARKTLS.Client.Advance (S, Test_Pool.Handshakes, Final_Res);
                end if;
                Trace_Step ("final-drain", S, Final_Res);
             end;

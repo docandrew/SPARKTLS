@@ -27,27 +27,27 @@ PARENT="$(dirname "$ROOT")"
 # Pins as of 2026-09-15. Override with the environment variable to test
 # against a different revision (e.g. SPARKTLSCRYPTO_REF=master).
 SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
-SPARKX509_REF="${SPARKX509_REF:-ba9c37170911a3ef564472187f83a6b38dac8fb2}"   # master 2026-09-15, PR #7 (empty NameConstraints subtrees)
+SPARKX509_REF="${SPARKX509_REF:-2a33ed8b68ca69aa6e3009d06a32c7ee8b89a352}"   # master 2026-09-24, PR #8 (build with -fno-tree-vrp)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-b89c8bee8013498ac9008f92f4fd5480740e60df}"   # master 2026-09-23, SP 800-90A HMAC_DRBG with start-up self-test and CAVP KAT lane (PR #12)
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-524385da79cee4e4a396d6456ed7c5c8188d09e6}"   # master 2026-09-24, PR #13 (-fno-tree-vrp, SPARKNaCl ^4.0.1, NOTICE attributions)
 
 
 # ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).
 SPARKMLKEM_URL="https://github.com/docandrew/sparkmlkem.git"
-SPARKMLKEM_REF="${SPARKMLKEM_REF:-5fbd0c9ae7a498f4bd5350547ebaffba381156fa}"   # master 2026-09-21, stack-residue scanner gate (PR #1)
+SPARKMLKEM_REF="${SPARKMLKEM_REF:-d9a8f03f16ac24921fbb22d975d7ba891c39aac0}"   # master 2026-09-24, PR #2 (build with -fno-tree-vrp)
 
 #  SPARK PIV client + Linux usbfs CCID transport; the examples project
 #  (tls_yubikey_server, piv_signer) withs sparkpiv_linux.gpr. Library code
 #  never depends on it.
 SPARKPIV_URL="https://github.com/docandrew/sparkpiv.git"
-SPARKPIV_REF="${SPARKPIV_REF:-bf2c38662aafa02ff6b358f43606038b23f82457}"   # main 2026-09-20, review fixes merged
+SPARKPIV_REF="${SPARKPIV_REF:-df7f05ae02f732094a4229a4c2c1cc3e6ac35b56}"   # main 2026-09-24, PR #2 (build with -fno-tree-vrp)
 
 # Needed by examples/ (pinned ../../sparkentropy). Without it the examples
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
 # integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
 SPARKENTROPY_URL="https://github.com/docandrew/sparkentropy.git"
-SPARKENTROPY_REF="${SPARKENTROPY_REF:-f707e61678576b4748c040d645b8ed427a28f8c8}"   # main 2026-09-23, intermittent/permanent health-test tiers, OSR accessors (PR #2)
+SPARKENTROPY_REF="${SPARKENTROPY_REF:-d92938ebf6cde3074dacc89a1da50a208f57af20}"   # main 2026-09-24, PR #3 (-fno-tree-vrp guard)
 
 clone_at() {
     local url="$1" ref="$2" dir="$3"

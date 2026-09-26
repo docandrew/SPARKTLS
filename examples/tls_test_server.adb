@@ -19,6 +19,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
+with Server_Pool;
 with Entropy_Random;
 
 with GNAT.Sockets;               use GNAT.Sockets;
@@ -107,13 +108,13 @@ begin
    --  Initialize TLS server session
    S := SPARKTLS.Server.Configure
      ((Local  => Id'Unchecked_Access,
-       others => <>));
+       others => <>), Server_Pool.Handshakes);
 
    Put_Line ("Waiting for ClientHello...");
 
    --  Main handshake loop
    Handshake_Loop : loop
-      SPARKTLS.Server.Advance (S, Res);
+      SPARKTLS.Server.Advance (S, Server_Pool.Handshakes, Res);
 
       case Res is
          when Has_Output =>
@@ -172,7 +173,7 @@ begin
    --  Echo loop: read app data and echo it back
    Put_Line ("Connected. Echoing data...");
    Echo_Loop : loop
-      SPARKTLS.Server.Advance (S, Res);
+      SPARKTLS.Server.Advance (S, Server_Pool.Handshakes, Res);
 
       case Res is
          when Has_Output =>

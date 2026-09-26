@@ -1,14 +1,14 @@
---  Bounded pool for handshake DATA-PLANE state (#106).
+--  Operations on a handshake pool (#106).
 --
 --  The handshake context splits in two: the small control-plane record
 --  (secrets, transcript contexts, negotiation state -- a few KB) lives
 --  INLINE in the Session, where a Session predicate can finally state
 --  the state<->phase and version<->suite couplings over one object.
---  The three jumbo components below (~236 KB together) live here, in a
---  fixed pool of Max_Inflight slots:
+--  The jumbo data-plane components (HS_Data, in the parent) live in a
+--  Handshake_Pool the application declares with Size slots:
 --
---    * bounded handshake memory: Max_Inflight x HS_Data, independent of
---      session count -- completed/idle sessions hold NO slot;
+--    * bounded handshake memory: Size x HS_Data, independent of session
+--      count -- completed/idle sessions hold NO slot;
 --    * admission control: pool exhausted => the handshake is refused
 --      before any allocation, instead of the process growing;
 --    * zero access types: the leak and borrow obligations of the old
@@ -19,61 +19,32 @@
 --  peer-visible data, not key material, yet stale cross-connection
 --  reads would still be a confidentiality bug.
 --
---  SPARK note: no type predicate references this package's state --
---  predicates cannot read globals. All pooled data is deliberately
---  invariant-free; every proof-carrying fact stays in the Session.
-
-with X509;
+--  SPARK note: no type predicate references a pool -- a Session and the
+--  pool it draws from are separate objects. All pooled data is
+--  deliberately invariant-free; every proof-carrying fact stays in the
+--  Session.
 
 package SPARKTLS.HS_Pool
   with SPARK_Mode => On
 is
 
-   --  Slot types live in the parent (SPARKTLS.Slot_Count etc.):
-   --  Session must name them, and a parent spec cannot with its child.
-
-   --  The data-plane: everything a handshake needs that is too big to
-   --  carry per-session for the session's whole lifetime.
-   type HS_Data is record
-      Reasm          : SPARKTLS_Reassembly.Buffer;
-      Peer_Leaf      : Pool_Entry;
-      Peer_Ints      : Cert_Pool;
-      Peer_Int_Count : Cert_Pool_Count := 0;
-      --  Stapled OCSP response for the leaf (RFC 8446 4.4.2.1 CertificateEntry
-      --  status_request extension, or the TLS 1.2 CertificateStatus message).
-      --  Len = 0: none. Too_Big: the server stapled something over
-      --  Max_OCSP_Response bytes, treated as absent.
-      Stapled_OCSP     : X509.Byte_Seq (0 .. Max_OCSP_Response - 1) := (others => 0);
-      Stapled_OCSP_Len : X509.N32 range 0 .. Max_OCSP_Response := 0;
-      Stapled_Too_Big  : Boolean := False;
-      --  Reusable RecordFlux build/parse arena, INLINE (no heap). Handshake
-      --  builders hand it to RecordFlux via SPARKTLS.RFLX_Borrow.Borrow and
-      --  return it with Discard; the storage is part of the slot, so it
-      --  persists across handshakes for the pool's lifetime.
-      Arena_Storage  : aliased Arena_Bytes := (others => 0);
-   end record;
-
-   type Slot_Array is array (Slot_Index) of HS_Data;
-   type Use_Map is array (Slot_Index) of Boolean;
-
-   --  Public by design: handlers receive Slots (S.Slot) as an explicit
-   --  `in out HS_Data` parameter from the dispatch layer -- three
-   --  distinct objects (S, S.HC view, D) means no aliasing and no
-   --  Global-annotation cascade through the handler tree.
-   Slots  : Slot_Array;
-   In_Use : Use_Map := (others => False);
+   --  The pool types live in the parent (SPARKTLS.Handshake_Pool etc.):
+   --  Session and Drop must name them, and a parent spec cannot with its
+   --  child. The handlers name the data-plane record through this subtype.
+   subtype HS_Data is SPARKTLS.HS_Data;
 
    --  Admission control. Slot = No_Slot means the pool is exhausted and
    --  the handshake must be refused (the caller maps this to a clean
    --  connection rejection, never a crash).
-   procedure Acquire (Slot : out Slot_Count)
-   with Post => (if Slot /= No_Slot then In_Use (Slot));
+   procedure Acquire (Pool : in out Handshake_Pool; Slot : out Slot_Count)
+   with Post => (if Slot /= No_Slot then Slot <= Pool.Size and then Pool.In_Use (Slot));
 
-   --  Wipe and free. Total and idempotent: a Pre demanding In_Use
-   --  would tie Session.Slot to pool state -- exactly the cross-object
-   --  obligation this carve exists to eliminate. Wiping a free slot is
-   --  harmless; the wipe is unconditional either way.
-   procedure Release (Slot : Slot_Index)
-   with Post => not In_Use (Slot);
+   --  Wipe and free. Total over the pool's slots and idempotent: a Pre
+   --  demanding In_Use would tie Session.Slot to pool state -- exactly the
+   --  cross-object obligation this carve exists to eliminate. Wiping a
+   --  free slot is harmless; the wipe is unconditional either way.
+   procedure Release (Pool : in out Handshake_Pool; Slot : Slot_Index)
+   with Pre  => Slot <= Pool.Size,
+        Post => not Pool.In_Use (Slot);
 
 end SPARKTLS.HS_Pool;

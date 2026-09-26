@@ -22,6 +22,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
+with Server_Pool;
 with Entropy_Random;
 
 with GNAT.Sockets;               use GNAT.Sockets;
@@ -121,10 +122,10 @@ procedure TLS_SNI_Server is
       S := Server.Configure
         ((Local           => Id_Default'Unchecked_Access,
           Select_Identity => Pick_Identity'Unrestricted_Access,
-          others          => <>));
+          others          => <>), Server_Pool.Handshakes);
 
       loop
-         Server.Advance (S, Res);
+         Server.Advance (S, Server_Pool.Handshakes, Res);
          case Res is
             when Has_Output => Send_Output;
             when Need_Input =>
@@ -161,11 +162,11 @@ procedure TLS_SNI_Server is
          end case;
       end loop;
       --  Give the handshake slot back on every exit (see SPARKTLS.Drop).
-      SPARKTLS.Drop (S);
+      SPARKTLS.Drop (S, Server_Pool.Handshakes);
 
    exception
       when E : others =>
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Server_Pool.Handshakes);
          Put_Line ("  Connection error: "
                    & Ada.Exceptions.Exception_Message (E));
    end Handle_Connection;

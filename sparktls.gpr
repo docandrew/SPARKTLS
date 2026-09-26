@@ -63,11 +63,17 @@ project Sparktls is
       when others => null;
    end case;
 
+   --  -fno-tree-vrp: GCC's value-range propagation miscompiles code of this
+   --  kind in GNAT 15.2 and 16.1 (the GCC 14 change SPARKNaCl works around the
+   --  same way). Measured 2026-09-24 on SPARKNaCl's SHA-256: at -O2 and -O3
+   --  every digest was wrong; with this flag, or at -O1, or with GNAT 13.2,
+   --  all were right. Optimised modes only: -Og does not run the pass.
    Build_Switches := ();
    case Build_Mode is
       when "optimize" =>
          Build_Switches := ("-O3",     -- Optimization
                             "-gnatn", -- Enable inlining
+                            "-fno-tree-vrp",
                             "-march=native",
                             "-mtune=native");
       when "debug" =>

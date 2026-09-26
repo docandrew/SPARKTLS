@@ -6,18 +6,17 @@ is
    ----------------------------------------------------------------------------
    --  Client-side TLS 1.3 session management
    --
-   --  Usage (blocking):
+   --  Usage (blocking). SPARKTLS.RBG.Init has run, and Handshakes is a
+   --  library-level SPARKTLS.Handshake_Pool (see Handshake_Pool):
    --
-   --    S   : SPARKTLS.Session;
-   --    Cfg : SPARKTLS.Config := (Random => My_RNG'Access, ...);
+   --    Cfg : SPARKTLS.Config := (Server_Name => ..., Trust => ..., others => <>);
+   --    S   : SPARKTLS.Session := SPARKTLS.Client.Configure (Cfg, Handshakes);
    --    Res : SPARKTLS.Action;
    --    Buf : Byte_Seq (0 .. 16383);
    --    N   : N32;
    --
-   --    SPARKTLS.Client.Init (S, Cfg);
-   --
    --    loop
-   --       SPARKTLS.Client.Advance (S, Res);
+   --       SPARKTLS.Client.Advance (S, Handshakes, Res);
    --       case Res is
    --          when Has_Output =>
    --             SPARKTLS.Drain_Ciphertext (S, Buf, N);
@@ -38,13 +37,17 @@ is
    --       end case;
    --    end loop;
    --
+   --  If the transport closes or times out before Advance reports
+   --  Handshake_Done or Error_Alert, call SPARKTLS.Drop (S, Handshakes) to
+   --  return the session's slot to the pool.
+   --
    --  Usage (async / event-driven):
    --
    --    On socket readable:
    --       N := Socket_Read (Buf);
    --       SPARKTLS.Feed_Ciphertext (S, Buf (0 .. N - 1), N);
    --       loop
-   --          SPARKTLS.Client.Advance (S, Res);
+   --          SPARKTLS.Client.Advance (S, Handshakes, Res);
    --          exit when Res = Need_Input;
    --          -- handle Has_Output, Plaintext_Ready, etc.
    --       end loop;
@@ -60,9 +63,9 @@ is
    --  Sets Mode_WebPKI and Purpose_Server.
    --  After Configure, the caller should drain and send the ClientHello.
    --
-   --  Side_Effects: allocate from the available Handshake Context (HC) pool
+   --  Side_Effects: takes a slot from Pool (see Handshake_Pool)
    ----------------------------------------------------------------------------
-   function Configure (Cfg : Config) return Session
+   function Configure (Cfg : Config; Pool : in out Handshake_Pool) return Session
    with
      Side_Effects,
      --  Configure leaves the session in Client_Hello_Sent, or Error_State
@@ -86,7 +89,7 @@ is
    --    Error_Alert     => check Last_Error (S)
    --  RFC 8446 4.1: Step the client handshake / record processing
    --  state machine.
-   procedure Advance (S : in out Session; Result : out Action)
+   procedure Advance (S : in out Session; Pool : in out Handshake_Pool; Result : out Action)
    with Pre => State (S) /= Idle and Role (S) = Role_Client;
 
    --  RFC 8446 6.1: Send a close_notify alert.

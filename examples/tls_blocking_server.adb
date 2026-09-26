@@ -27,6 +27,7 @@ use type SPARKTLS.RBG.RBG_Status;
 
 with GNAT.Sockets;               use GNAT.Sockets;
 with SPARKTLS.Ticket_Keys;
+with Server_Pool;
 
 procedure TLS_Blocking_Server is
 
@@ -263,11 +264,11 @@ procedure TLS_Blocking_Server is
           Get_TEK_By_Id       =>
             SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access,
           Get_Time            => Now_UTC'Unrestricted_Access,
-          others              => <>));
+          others              => <>), Server_Pool.Handshakes);
 
       --  Handshake + data loop
       loop
-         Server.Advance (S, Res);
+         Server.Advance (S, Server_Pool.Handshakes, Res);
 
          case Res is
             when Has_Output =>
@@ -351,13 +352,13 @@ procedure TLS_Blocking_Server is
       --  Whatever ended the connection, give the handshake slot back
       --  (see SPARKTLS.Drop): a peer that disconnects after our
       --  ServerHello otherwise pins it for the life of the process.
-      SPARKTLS.Drop (S);
+      SPARKTLS.Drop (S, Server_Pool.Handshakes);
 
    exception
       when Socket_Error =>
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Server_Pool.Handshakes);
       when E : others =>
-         SPARKTLS.Drop (S);
+         SPARKTLS.Drop (S, Server_Pool.Handshakes);
          Put_Line ("  Connection error: " &
                    Ada.Exceptions.Exception_Message (E));
    end Handle_Connection;

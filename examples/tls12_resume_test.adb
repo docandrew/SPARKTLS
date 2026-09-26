@@ -30,6 +30,7 @@ with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with Client_Pool;
 with Entropy_Random;
 with X509;
 
@@ -115,13 +116,13 @@ procedure TLS12_Resume_Test is
           Port   => Port));
       Channel := Stream (Sock);
 
-      S := SPARKTLS.Client.Configure (Cfg);
+      S := SPARKTLS.Client.Configure (Cfg, Client_Pool.Handshakes);
 
       Loop_HS : loop
          Iter := Iter + 1;
          exit Loop_HS when Iter > 200;
 
-         SPARKTLS.Client.Advance (S, Res);
+         SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
          case Res is
             when Has_Output =>
                SPARKTLS.Drain_Ciphertext (S, Net, N);
@@ -188,7 +189,7 @@ procedure TLS12_Resume_Test is
                         N := 5 + Rec_Len;
                         SPARKTLS.Feed_Ciphertext
                           (S, Net (0 .. N - 1), N);
-                        SPARKTLS.Client.Advance (S, Res);
+                        SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
                         if Res = Plaintext_Ready then
                            SPARKTLS.Read_Plaintext (S, Net, N);
                         end if;
@@ -210,7 +211,7 @@ procedure TLS12_Resume_Test is
          end if;
       end if;
 
-      begin SPARKTLS.Drop (S); Close_Socket (Sock); exception when others => null; end;
+      begin SPARKTLS.Drop (S, Client_Pool.Handshakes); Close_Socket (Sock); exception when others => null; end;
    end Run_One_Connection;
 
 begin

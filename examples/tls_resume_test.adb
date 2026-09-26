@@ -34,6 +34,7 @@ with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with Client_Pool;
 with Entropy_Random;
 with X509;
 
@@ -158,14 +159,14 @@ procedure TLS_Resume_Test is
                     Port   => Port));
       Channel := Stream (Sock);
 
-      S := SPARKTLS.Client.Configure (Cfg);
+      S := SPARKTLS.Client.Configure (Cfg, Client_Pool.Handshakes);
 
       --  Handshake loop.
       Handshake_Loop : loop
          Iter := Iter + 1;
          exit Handshake_Loop when Iter > 200;  --  safety
 
-         SPARKTLS.Client.Advance (S, Res);
+         SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
          case Res is
             when Has_Output =>
                SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
@@ -246,7 +247,7 @@ procedure TLS_Resume_Test is
                         N := 5 + Rec_Len;
                         SPARKTLS.Feed_Ciphertext
                           (S, Net_Buf (0 .. N - 1), N);
-                        SPARKTLS.Client.Advance (S, Res);
+                        SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
                         if Res = Plaintext_Ready then
                            SPARKTLS.Read_Plaintext (S, Net_Buf, N);
                         end if;
@@ -274,7 +275,7 @@ procedure TLS_Resume_Test is
       --  Cleanly close socket. Don't bother with close_notify on
       --  the first connection — server will tear down on FIN too.
       begin
-         SPARKTLS.Drop (S); Close_Socket (Sock);
+         SPARKTLS.Drop (S, Client_Pool.Handshakes); Close_Socket (Sock);
       exception when others => null;
       end;
    end Run_One_Connection;

@@ -28,6 +28,9 @@ package POSIX_Thin is
    EPOLLERR       : constant := 16#008#;
    EPOLLHUP       : constant := 16#010#;
    EPOLLET        : constant := 16#80000000#;
+   --  Several epoll sets watch one fd (a shared listening socket) and an
+   --  event wakes only one of them. ADD only: not accepted by EPOLL_CTL_MOD.
+   EPOLLEXCLUSIVE : constant := 16#10000000#;
    EPOLL_CTL_ADD  : constant := 1;
    EPOLL_CTL_DEL  : constant := 2;
    EPOLL_CTL_MOD  : constant := 3;
@@ -42,13 +45,16 @@ package POSIX_Thin is
    pragma Convention (C, Sockaddr_In);
 
    --  epoll_event
-   --  The C epoll_data_t is an 8-byte union (u64/ptr/etc.). We only
-   --  use the fd member but must occupy the full 8 bytes or the array
-   --  stride will mismatch the kernel's and we'll read garbage after
-   --  index 0 (and the kernel will write past our Events array).
+   --  The C epoll_data_t is an 8-byte union (u64/ptr/etc.) that the kernel
+   --  hands back verbatim with each event. We split it into two ints: the
+   --  fd, and a Tag the application may use to find its own state for the
+   --  fd without a search (tls_web_epoll stores a connection index there).
+   --  It must occupy the full 8 bytes or the array stride will mismatch
+   --  the kernel's and we'll read garbage after index 0 (and the kernel
+   --  will write past our Events array).
    type Epoll_Data is record
-      FD      : int := 0;
-      Padding : int := 0;
+      FD  : int := 0;
+      Tag : int := 0;
    end record;
    pragma Convention (C, Epoll_Data);
 

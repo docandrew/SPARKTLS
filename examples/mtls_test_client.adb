@@ -36,6 +36,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with Client_Pool;
 with Software_Signer;
 with Entropy_Random;
 with X509;
@@ -355,12 +356,12 @@ begin
        ALPN                 => SPARKTLS.To_Name (Cfg_ALPN (1 .. Cfg_ALPN_Len)),
        Skip_Verify          => Cfg_Skip_Verify,
        Skip_Hostname_Verify => Cfg_Skip_Hostname_Verify,
-       others               => <>));
+       others               => <>), Client_Pool.Handshakes);
 
    --  Drive handshake to completion, then exchange app data, then close.
    Loop1 :
    loop
-      SPARKTLS.Client.Advance (S, Res);
+      SPARKTLS.Client.Advance (S, Client_Pool.Handshakes, Res);
       case Res is
          when Has_Output =>
             Send_Pending;
@@ -440,7 +441,7 @@ begin
       end case;
    end loop Loop1;
    --  Whatever ended the loop, release the session (see SPARKTLS.Drop).
-   SPARKTLS.Drop (S);
+   SPARKTLS.Drop (S, Client_Pool.Handshakes);
 
    --  Determine final outcome
    declare
