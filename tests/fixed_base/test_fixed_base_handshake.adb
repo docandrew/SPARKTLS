@@ -4,6 +4,8 @@ with Ada.Calendar.Formatting;
 with Ada.Text_IO; use Ada.Text_IO;
 with Interfaces; use Interfaces;
 with SPARKNaCl; use SPARKNaCl;
+with Server_Pool;
+with Client_Pool;
 with SPARKTLS; use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Server;
@@ -54,7 +56,7 @@ procedure Test_Fixed_Base_Handshake is
          Buf : Byte_Seq (0 .. 255);
          N, Written : N32;
       begin
-         Client.Advance (C, A);
+         Client.Advance (C, Client_Pool.Handshakes, A);
          if A = Error_Alert or A = Shutdown then
             raise Program_Error with "client: " & Describe (Last_Error (C));
          elsif A = Plaintext_Ready then
@@ -65,7 +67,7 @@ procedure Test_Fixed_Base_Handshake is
             Got_Echo := True;
          end if;
          Transfer (C, S);
-         Server.Advance (S, A);
+         Server.Advance (S, Server_Pool.Handshakes, A);
          if A = Error_Alert or A = Shutdown then
             raise Program_Error with "server: " & Describe (Last_Error (S));
          elsif A = Plaintext_Ready then
@@ -82,11 +84,13 @@ procedure Test_Fixed_Base_Handshake is
       Written : N32;
    begin
       S := Server.Configure ((Local => Id'Unchecked_Access,
-                              Versions => TLS_1_3_Only, others => <>));
+                              Versions => TLS_1_3_Only, others => <>),
+                             Server_Pool.Handshakes);
       C := Client.Configure
         ((Server_Name => To_Name ("localhost"), Trust => Roots'Unchecked_Access,
           Verify_Mode => Mode_RFC5280, Get_Time => Current_Time'Unrestricted_Access,
-          Versions => TLS_1_3_Only, Client_Key_Share_Group => Group, others => <>));
+          Versions => TLS_1_3_Only, Client_Key_Share_Group => Group, others => <>),
+         Client_Pool.Handshakes);
       for I in 1 .. 100 loop
          Step;
          exit when State (C) = Connected and State (S) = Connected;
@@ -106,7 +110,7 @@ procedure Test_Fixed_Base_Handshake is
       if not Got_Request or not Got_Echo then
          raise Program_Error with "encrypted exchange did not finish";
       end if;
-      Drop (C); Drop (S);
+      Drop (C, Client_Pool.Handshakes); Drop (S, Server_Pool.Handshakes);
       Put_Line ("PASS: verified TLS 1.3 and encrypted echo, " & Group'Image);
    end Exercise;
 begin

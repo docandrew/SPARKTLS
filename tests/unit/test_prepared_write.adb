@@ -2,6 +2,7 @@ with Ada.Text_IO; use Ada.Text_IO;
 with Interfaces; use Interfaces;
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
+with Test_Pool;
 with SPARKTLS; use SPARKTLS;
 with SPARKTLS.Records;
 with SPARKTLS.Test_Support;
@@ -99,12 +100,12 @@ procedure Test_Prepared_Write is
       Check (TS.Write_Cache_Erased (S), "sanitize retained derived key material");
       TS.Install_Test_Traffic (S, Suite);
       Write_And_Check (257);
-      Drop (S);
+      Drop (S, Test_Pool.Handshakes);
       Check (TS.Write_Cache_Erased (S), "drop retained derived key material");
       TS.Reset (S);
       TS.Install_Test_Traffic (S, Suite);
       Write_And_Check (16384);
-      Drop (S);
+      Drop (S, Test_Pool.Handshakes);
    end Exercise;
 begin
    for Role in TLS_Role loop

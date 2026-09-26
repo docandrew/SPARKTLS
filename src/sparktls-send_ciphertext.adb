@@ -9,10 +9,15 @@ begin
    end if;
    Send (S.Output.Storage
            (Ix (S.Output.Read_Pos) .. Ix (S.Output.Write_Pos - 1)), Bytes_Sent);
-   --  Keep the cursor valid even when a non-SPARK callback violates its
-   --  contract in a build with assertions disabled.
+   --  Unreachable under the formal's contract, but the actual callback is
+   --  often non-SPARK and its Post goes unchecked with assertions disabled.
+   --  A count above what was offered is a transport bug: consume nothing
+   --  and fail the session rather than move Read_Pos past Write_Pos.
    if Bytes_Sent > Count then
-      raise Constraint_Error with "transport accepted more than offered";
+      Bytes_Sent := 0;
+      Set_State (S, Error_State);
+      S.Last_Error := Internal_Error;
+      return;
    end if;
    S.Output.Read_Pos := S.Output.Read_Pos + Bytes_Sent;
    if S.Output.Read_Pos = S.Output.Write_Pos then
