@@ -506,7 +506,9 @@ is
          HC.Ext_Parse_Err := Decode_Error;
          return;
       end if;
-      if X25519 then
+      --  FIPS mode: standalone X25519 is not negotiable, so it is not
+      --  recorded as supported (the hybrid is, below).
+      if X25519 and then Group_Allowed (HC.Cfg.Algorithms, Group_X25519) then
          HC.Client_Supports_X25519 := True;
       end if;
       if P256 then
@@ -1226,7 +1228,8 @@ is
 
    --  Apply one parsed cipher suite to the session's negotiation state:
    --  pick the best TLS 1.3 suite (preferring ChaCha20) and the first
-   --  TLS 1.2 ECDHE suite we recognize.
+   --  TLS 1.2 ECDHE suite we recognize. A suite the configured FIPS_Mode
+   --  forbids (ChaCha20 in FIPS mode) is ignored as if never offered.
    function TLS12_Cipher_Group (Cfg : Config; Val : Unsigned_16) return Natural is
    begin
       if Cfg.TLS12_Cipher_Count = 0 then
@@ -1299,6 +1302,10 @@ is
    begin
       if Val = 16#00FF# then
          HC.Saw_Reneg_Info := True;
+         return;
+      end if;
+
+      if not Suite_Allowed (HC.Cfg.Algorithms, To_Suite (Val)) then
          return;
       end if;
 
@@ -2900,9 +2907,14 @@ is
       --  still permitted -- assume the widely-implemented X25519, exactly as
       --  the former no-extensions parser did. Without this a legacy client
       --  that omits extensions gets handshake_failure (BoGo
-      --  Empty/OmitExtensions-ClientHello-TLS12).
+      --  Empty/OmitExtensions-ClientHello-TLS12). FIPS mode assumes P-256
+      --  instead, which RFC 4492 5.1 equally allows.
       if not Present (Ctx, F_Extensions_TLS) then
-         HC.Client_Supports_X25519 := True;
+         if Group_Allowed (HC.Cfg.Algorithms, Group_X25519) then
+            HC.Client_Supports_X25519 := True;
+         else
+            HC.Client_Supports_P256 := True;
+         end if;
       end if;
 
       Take_Buffer (Ctx, Buf);

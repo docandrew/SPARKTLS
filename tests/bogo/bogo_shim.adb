@@ -1771,6 +1771,8 @@ procedure Bogo_Shim is
                  (if Tickets_Off then null
                   else SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access);
                Server_Cfg.Versions := Policy;
+               --  BoGo is a protocol-conformance suite: run every algorithm.
+               Server_Cfg.Algorithms := SPARKTLS.Non_FIPS;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;
                Server_Cfg.TLS12_Cipher_Count := Cfg.TLS12_Cipher_Count;
@@ -1844,6 +1846,8 @@ procedure Bogo_Shim is
                Client_Cfg.Get_Time := Current_Time'Unrestricted_Access;
                Client_Cfg.Verify_Mode := Mode_RFC5280;
                Client_Cfg.Versions := Policy;
+               --  BoGo is a protocol-conformance suite: run every algorithm.
+               Client_Cfg.Algorithms := SPARKTLS.Non_FIPS;
                Client_Cfg.Client_Key_Share_Group := Group_From_Wire (Cfg.Preferred_Group);
                Client_Cfg.Post_Quantum_First := Cfg.PQ_First;
                Client_Cfg.Resume_Ticket := Saved_Ticket;

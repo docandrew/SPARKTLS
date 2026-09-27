@@ -114,4 +114,11 @@ project Sparktls is
    --     for Proof_Switches ("Ada") use ("-cargs", "-gnatec=ci/proof.adc");
    --  end Prove;
 
+   --  FIPS 140-3 software integrity test: every executable that links the
+   --  library gathers the module into bracketed sections (see the script),
+   --  and tools/fips_inject then writes the expected MACs after the link.
+   package Linker is
+      for Linker_Options use ("-Wl,-T," & Project'Project_Dir & "ld/sparktls_fips.ld");
+   end Linker;
+
 end Sparktls;

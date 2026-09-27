@@ -625,17 +625,30 @@ is
    end Build_SNI_Raw;
 
    --  RFC 8422 5.1.1 supported_groups. Either the single group the server
-   --  selected in an HRR, or the full offered set.
+   --  selected in an HRR, or the full offered set. With_X25519 is False in
+   --  FIPS mode: standalone X25519 is not offered (the hybrid still is).
+   function SG_Count (Restrict, PQ, With_X25519 : Boolean) return N32
+   is (if Restrict then 1
+       else (if PQ then 1 else 0) + (if With_X25519 then 3 else 2));
+
    function Build_SG_Raw
-     (Restrict : Boolean; Group : ECDHE_Group; PQ : Boolean; PQ_First : Boolean) return Byte_Seq
+     (Restrict    : Boolean;
+      Group       : ECDHE_Group;
+      PQ          : Boolean;
+      PQ_First    : Boolean;
+      With_X25519 : Boolean) return Byte_Seq
    with
      Post =>
        Build_SG_Raw'Result'First = 0
-       and then Build_SG_Raw'Result'Last = (if Restrict then 3 elsif PQ then 9 else 7);
+       and then Build_SG_Raw'Result'Last = 1 + 2 * SG_Count (Restrict, PQ, With_X25519);
 
    function Build_SG_Raw
-     (Restrict : Boolean; Group : ECDHE_Group; PQ : Boolean; PQ_First : Boolean) return Byte_Seq is
-      Count : constant N32 := (if Restrict then 1 elsif PQ then 4 else 3);
+     (Restrict    : Boolean;
+      Group       : ECDHE_Group;
+      PQ          : Boolean;
+      PQ_First    : Boolean;
+      With_X25519 : Boolean) return Byte_Seq is
+      Count : constant N32 := SG_Count (Restrict, PQ, With_X25519);
       Wire  : constant Unsigned_16 := ECDHE_Group_Wire (Group);
       R     : Byte_Seq (0 .. 1 + 2 * Count) := (others => 0);
       P     : N32 := 2;
@@ -651,15 +664,18 @@ is
             R (P + 1) := Byte (Group_X25519MLKEM768_Wire mod 256);
             P := P + 2;
          end if;
+         if With_X25519 then
+            R (P)     := 16#00#;
+            R (P + 1) := 16#1D#;  --  X25519
+            P := P + 2;
+         end if;
          R (P)     := 16#00#;
-         R (P + 1) := 16#1D#;  --  X25519
+         R (P + 1) := 16#17#;  --  secp256r1
          R (P + 2) := 16#00#;
-         R (P + 3) := 16#17#;  --  secp256r1
-         R (P + 4) := 16#00#;
-         R (P + 5) := 16#18#;  --  secp384r1
+         R (P + 3) := 16#18#;  --  secp384r1
          if PQ and then not PQ_First then
-            R (P + 6) := Byte (Group_X25519MLKEM768_Wire / 256);
-            R (P + 7) := Byte (Group_X25519MLKEM768_Wire mod 256);
+            R (P + 4) := Byte (Group_X25519MLKEM768_Wire / 256);
+            R (P + 5) := Byte (Group_X25519MLKEM768_Wire mod 256);
          end if;
       end if;
       return R;
@@ -737,7 +753,9 @@ is
    --  single configured initial entry. KS_Raw'Length must match the
    --  entry accounting done by the caller (KS_Data_Len).
    --  Dual selects the CH1 shape with post-quantum on: two entries,
-   --  X25519MLKEM768 then X25519 (the order the browsers send).
+   --  X25519MLKEM768 then a classical share (the order the browsers send).
+   --  The classical partner is X25519, or P-256 in FIPS mode
+   --  (Dual_P256).
    procedure Fill_KS_Raw
      (Retry_Single : in Boolean;
       Retry_Group  : in Maybe_ECDHE_Group;
@@ -745,6 +763,7 @@ is
       Init_Group   : in ECDHE_Group;
       Init_Entry   : in N32;
       Dual         : in Boolean;
+      Dual_P256    : in Boolean;
       PQ_First     : in Boolean;
       PK_Bytes     : in Byte_Seq;
       P256_PK_Enc  : in Byte_Seq;
@@ -796,24 +815,33 @@ is
                null;
          end case;
       elsif Dual then
-         --  CH1 with post-quantum: X25519MLKEM768 and X25519, in the
-         --  configured preference order.
+         --  CH1 with post-quantum: X25519MLKEM768 and the classical
+         --  partner (X25519, or P-256), in the configured preference order.
          declare
-            H : constant N32 := (if PQ_First then 2 else 2 + 36);
+            C_Len : constant N32 := (if Dual_P256 then 69 else 36);
+            H : constant N32 := (if PQ_First then 2 else 2 + C_Len);
             X : constant N32 := (if PQ_First then 6 + Hybrid_Client_Share_Len else 2);
          begin
-            KS_Raw (0) := Byte ((4 + Hybrid_Client_Share_Len + 36) / 256);
-            KS_Raw (1) := Byte ((4 + Hybrid_Client_Share_Len + 36) mod 256);
+            KS_Raw (0) := Byte ((4 + Hybrid_Client_Share_Len + C_Len) / 256);
+            KS_Raw (1) := Byte ((4 + Hybrid_Client_Share_Len + C_Len) mod 256);
             KS_Raw (H)     := Hybrid_A;
             KS_Raw (H + 1) := Hybrid_B;
             KS_Raw (H + 2) := Hybrid_Len_A;
             KS_Raw (H + 3) := Hybrid_Len_B;
             KS_Raw (H + 4 .. H + 3 + Hybrid_Client_Share_Len) := Hybrid_Share;
-            KS_Raw (X)     := Byte (Group_X25519_Wire / 256);
-            KS_Raw (X + 1) := Byte (Group_X25519_Wire mod 256);
-            KS_Raw (X + 2) := 16#00#;
-            KS_Raw (X + 3) := 16#20#;
-            KS_Raw (X + 4 .. X + 35) := PK_Bytes;
+            if Dual_P256 then
+               KS_Raw (X)     := Byte (Group_Secp256r1_Wire / 256);
+               KS_Raw (X + 1) := Byte (Group_Secp256r1_Wire mod 256);
+               KS_Raw (X + 2) := 16#00#;
+               KS_Raw (X + 3) := 16#41#;
+               KS_Raw (X + 4 .. X + 68) := P256_PK_Enc;
+            else
+               KS_Raw (X)     := Byte (Group_X25519_Wire / 256);
+               KS_Raw (X + 1) := Byte (Group_X25519_Wire mod 256);
+               KS_Raw (X + 2) := 16#00#;
+               KS_Raw (X + 3) := 16#20#;
+               KS_Raw (X + 4 .. X + 35) := PK_Bytes;
+            end if;
          end;
       else
          --  CH1 / cookie-only retry: single configured initial entry.
@@ -1069,8 +1097,13 @@ is
         Retry_Mode and then HC.HRR_Selected_Group /= Group_None;
 
       Retry_KS_Entry          : constant N32 := Shares_Len (HC.HRR_Selected_Group);
+      --  FIPS mode offers no standalone X25519 and no ChaCha20 suites; its
+      --  classical default share is P-256 instead of X25519.
+      FIPS                    : constant Boolean := HC.Cfg.Algorithms = SPARKTLS.FIPS;
+      Classical_Group         : constant ECDHE_Group :=
+        (if FIPS then Group_Secp256r1 else Group_X25519);
       Initial_Key_Share_Group : constant ECDHE_Group :=
-        (if HC.Cfg.Client_Key_Share_Group = Group_None then Group_X25519
+        (if HC.Cfg.Client_Key_Share_Group = Group_None then Classical_Group
          else HC.Cfg.Client_Key_Share_Group);
 
       Initial_KS_Entry        : constant N32 := Shares_Len (Initial_Key_Share_Group);
@@ -1088,8 +1121,12 @@ is
         Dual_KS
         or else Initial_Key_Share_Group = Group_X25519MLKEM768
         or else (Retry_KS_Single and then HC.HRR_Selected_Group = Group_X25519MLKEM768);
-      SG_Group_Count          : constant N32 :=
-        (if Restrict_Groups then 1 elsif Offer_PQ then 4 else 3);
+      SG_Group_Count          : constant N32 := SG_Count (Restrict_Groups, Offer_PQ, not FIPS);
+      --  cipher_suites: 9 suites (18 bytes), or 6 without ChaCha20.
+      Suites_Len              : constant N32 := (if FIPS then 12 else 18);
+      --  Fixed ClientHello body bytes: version(2) + random(32) + sid_len(1)
+      --  + suites_len(2) + suites + comp_len(1) + comp(1) + ext_len(2).
+      Fixed_Len               : constant N32 := 41 + Suites_Len;
 
       --  Extension data sizes
       Host_Len     : constant N32 := N32 (HC.Cfg.Server_Name.Len);
@@ -1117,7 +1154,7 @@ is
       --  With post-quantum on: two entries (1220 + 36) = 1258 bytes.
       KS_Data_Len  : constant N32 :=
         (if Retry_KS_Single then 2 + Retry_KS_Entry
-         elsif Dual_KS then 2 + Shares_Len (Group_X25519MLKEM768) + Shares_Len (Group_X25519)
+         elsif Dual_KS then 2 + Shares_Len (Group_X25519MLKEM768) + Shares_Len (Classical_Group)
          else 2 + Initial_KS_Entry);
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
@@ -1222,7 +1259,7 @@ is
       --  land in the 256..511 "danger zone", append a padding
       --  extension (tag 0x0015) to push it to >= 512 bytes. BoGo
       --  ClientHelloPadding sets RequireClientHelloSize=512.
-      Pre_Pad_Msg_Len : constant N32 := 4 + 59 + Session_ID_Len + Ext_Total;
+      Pre_Pad_Msg_Len : constant N32 := 4 + Fixed_Len + Session_ID_Len + Ext_Total;
       Need_Pad        : constant Boolean := Pre_Pad_Msg_Len in 256 .. 511;
       --  Inside the danger zone, pad to exactly 512 when possible
       --  (Pre_Pad_Msg_Len <= 508 leaves >= 4 bytes for the ext
@@ -1238,7 +1275,7 @@ is
       --  instead of being an unprovable N32 -> 16-bit conversion.
       subtype CH_Extensions_Total is N32 range 8 .. 2**16 - 1;
       Ext_Total_All : constant CH_Extensions_Total := Ext_Total + Pad_Ext_Total;
-      CH_Body_Len   : constant N32 := 59 + Session_ID_Len + Ext_Total_All;
+      CH_Body_Len   : constant N32 := Fixed_Len + Session_ID_Len + Ext_Total_All;
       CH_Msg_Len    : constant N32 := 4 + CH_Body_Len;
 
       Buf         : RBT.Bytes_Ptr := null;
@@ -1335,8 +1372,8 @@ is
       pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Cipher_Suites_Length) = Ctx.First + 280 + 8 * RBT.Bit_Length (Session_ID_Len));
       --  TLS version routes past cookie fields to cipher_suites_length
       --  9 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-RSA + 3 TLS 1.2
-      --  ECDHE-ECDSA = 18 bytes
-      Set_Cipher_Suites_Length (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (18));
+      --  ECDHE-ECDSA = 18 bytes; FIPS drops the three ChaCha20 suites.
+      Set_Cipher_Suites_Length (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (Suites_Len));
       pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Cipher_Suites_TLS) = Ctx.First + 296 + 8 * RBT.Bit_Length (Session_ID_Len));
 
       --  Build cipher suite sequence
@@ -1345,32 +1382,38 @@ is
       begin
          Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256);
-         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
+         if not FIPS then
+            Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
+         end if;
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
-         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+         if not FIPS then
+            Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+         end if;
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
-         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
+         if not FIPS then
+            Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
+         end if;
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Compression_Methods_Length) = Ctx.First + 440 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Compression_Methods_Length) = Ctx.First + 296 + 8 * RBT.Bit_Length (Suites_Len) + 8 * RBT.Bit_Length (Session_ID_Len));
 
       Set_Legacy_Compression_Methods_Length (Ctx, 1);
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Compression_Methods) = Ctx.First + 448 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Compression_Methods) = Ctx.First + 304 + 8 * RBT.Bit_Length (Suites_Len) + 8 * RBT.Bit_Length (Session_ID_Len));
       --  Field_Size of the compression-methods field is data-dependent:
       --  it follows from the length field just written (1 byte = 8 bits).
       Set_Legacy_Compression_Methods (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
       Set_Extensions_Length
         (Ctx, RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Extensions_TLS) = Ctx.First + 472 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Extensions_TLS) = Ctx.First + 328 + 8 * RBT.Bit_Length (Suites_Len) + 8 * RBT.Bit_Length (Session_ID_Len));
       --  Room for the extensions: the message's Last is the arena end (Initialize
       --  Post + Borrow Post), the field's size is the length just written, and the
       --  upfront guard bounds that length by the result buffer.
       pragma Assert (Ctx.Last = RBT.Bit_Length (RFLX_Arena_Size) * 8);
       pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Extensions_TLS) = 8 * RBT.Bit_Length (Ext_Total_All));
-      pragma Assert (Ext_Total_All <= RFLX_Arena_Size - 59);
+      pragma Assert (Ext_Total_All <= RFLX_Arena_Size - Fixed_Len);
       --  Likewise: the extensions field size follows from the length
       --  field just written.
       --  One more link in the accounting chain, which previously stopped at
@@ -1447,7 +1490,8 @@ is
          declare
             SG_Raw : constant Byte_Seq :=
               Build_SG_Raw
-                (Restrict_Groups, Initial_Key_Share_Group, Offer_PQ, HC.Cfg.Post_Quantum_First);
+                (Restrict_Groups, Initial_Key_Share_Group, Offer_PQ, HC.Cfg.Post_Quantum_First,
+                 With_X25519 => not FIPS);
          begin
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Groups, SG_Raw);
             Remaining_Ext_Bits :=
@@ -1489,6 +1533,7 @@ is
                Initial_Key_Share_Group,
                Initial_KS_Entry,
                Dual_KS,
+               FIPS,
                HC.Cfg.Post_Quantum_First,
                PK_Bytes,
                P256_PK_Enc,
@@ -2208,7 +2253,9 @@ is
       declare
          Wire : constant Unsigned_16 := Suite_Wire (Get_Cipher_Suite_TLS_Suite (Ctx));
       begin
-         if To_Suite (Wire) not in TLS13_Suite then
+         if To_Suite (Wire) not in TLS13_Suite
+           or else not Suite_Allowed (HC.Cfg.Algorithms, To_Suite (Wire))
+         then
             Err := Illegal_Parameter;
             return;
          end if;
@@ -2286,11 +2333,14 @@ is
       --  any selected_group is either no change or a group we never
       --  offered (RFC 8446 4.1.4 / 4.2.8; BoGo UnnecessaryHelloRetryRequest,
       --  DisabledCurve-HelloRetryRequest). In the default profile CH1
-      --  offered every group with an X25519 share, and with post-quantum
-      --  on an X25519MLKEM768 share beside it, so those are no change.
+      --  offered every group with an X25519 share (P-256 in FIPS mode,
+      --  which never offers standalone X25519), and with post-quantum on an
+      --  X25519MLKEM768 share beside it, so those are no change.
       if HC.HRR_Selected_Group /= Group_None
         and then (HC.Cfg.Client_Key_Share_Group /= Group_None
                   or else HC.HRR_Selected_Group = Group_X25519
+                  or else (HC.Cfg.Algorithms = FIPS
+                           and then HC.HRR_Selected_Group = Group_Secp256r1)
                   or else (HC.HRR_Selected_Group = Group_X25519MLKEM768
                            and then HC.Cfg.Offer_Post_Quantum
                            and then HC.Cfg.Versions /= TLS_1_2_Only))
@@ -2435,13 +2485,14 @@ is
       --  HelloRetryRequestCurveMismatch, SecondClientHelloWrongCurve).
       --  Our ClientHello carries one share (the configured group, or the
       --  HRR's selected_group in CH2), or two with post-quantum on:
-      --  X25519MLKEM768 and X25519. The server may pick any of those.
+      --  X25519MLKEM768 and the classical default, X25519 (P-256 in FIPS
+      --  mode). The server may pick any of those.
       function Acceptable (G : ECDHE_Group) return Boolean
       is (if HC.Got_HRR and then HC.HRR_Selected_Group /= Group_None
           then G = HC.HRR_Selected_Group
           elsif HC.Cfg.Client_Key_Share_Group /= Group_None
           then G = HC.Cfg.Client_Key_Share_Group
-          else G = Group_X25519
+          else G = (if HC.Cfg.Algorithms = FIPS then Group_Secp256r1 else Group_X25519)
                or else (G = Group_X25519MLKEM768 and then HC.Cfg.Offer_Post_Quantum));
    begin
       RFLX.TLS_Handshake.Key_Share_SH.Initialize (KS, Scratch);
@@ -2789,6 +2840,11 @@ is
          Candidate : constant Supported_Suite := To_Suite (Wire);
       begin
          if Candidate = Suite_None then
+            return;
+         end if;
+         --  A suite we did not offer (ChaCha20 in FIPS mode).
+         if not Suite_Allowed (HC.Cfg.Algorithms, Candidate) then
+            Err := Illegal_Parameter;
             return;
          end if;
          if HC.Got_HRR and then HC.HRR_Cipher_Suite /= 0 and then Wire /= HC.HRR_Cipher_Suite then

@@ -191,6 +191,14 @@ is
       --  callback implementation, which is also the only party that knows
       --  whether keys are shared across threads, processes or nodes.
 
+      --  FIPS mode: the TLS 1.2 key derivation is approved only with the
+      --  Extended Master Secret (RFC 7627; FIPS 140-3 IG D.Q). A client
+      --  that did not offer it is refused before any flight is built.
+      if S.HC.Cfg.Algorithms = FIPS and then not S.HC.Use_EMS then
+         Send_Alert_And_Error (S, Handshake_Failure, Result);
+         return;
+      end if;
+
       --  RFC 5077 3.4: if the client offered a non-empty session_ticket
       --  extension AND we have configured ticket-encryption keys, try
       --  to decrypt + resume. On success we run the abbreviated flight;
@@ -594,7 +602,9 @@ is
          --  AEAD counter doesn't need rolling back on failure.)
       begin
          --  TLS 1.2 uses supported_groups (no key_share extension)
-         if S.HC.Client_Has_X25519 or S.HC.Client_Supports_X25519 then
+         if (S.HC.Client_Has_X25519 or S.HC.Client_Supports_X25519)
+           and then Group_Allowed (S.HC.Cfg.Algorithms, Group_X25519)
+         then
             S.HC.KE.Curve := Group_X25519;
             S.HC.KE.Negotiated := True;
          elsif S.HC.Client_Has_P256 or S.HC.Client_Supports_P256 then

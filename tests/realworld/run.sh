@@ -121,9 +121,15 @@ done
 # fetches revocation data itself, so without this the revoked.badssl.com
 # leaf is accepted under Soft_Fail (no evidence), exactly as curl accepts
 # it. With the CRL attached the client must refuse with certificate_revoked.
+#
+# The matrix runs tls_fetch with --non-fips: badssl.com serves TLS 1.2
+# without the Extended Master Secret, which FIPS mode (the default) refuses,
+# so in FIPS mode every row would fail before certificate validation. A
+# fourth field "fips" runs that row in the default FIPS mode instead.
 # ---------------------------------------------------------------------------
 BADSSL=(
     "badssl.com|connect|apex, valid cert, TLS 1.2 only"
+    "badssl.com|reject|TLS 1.2 without EMS, refused in FIPS mode|fips"
     "sha256.badssl.com|connect|SHA-256 leaf, should be accepted"
     "ecc256.badssl.com|connect|ECDSA P-256 leaf"
     "ecc384.badssl.com|connect|ECDSA P-384 leaf"
@@ -163,7 +169,8 @@ else
         flag=""
         [ "$rest" != "$why" ] && flag="${rest#*|}"
 
-        extra=()
+        extra=(--non-fips)
+        [ "$flag" = "fips" ] && extra=()
         if [ "$flag" = "crl" ]; then
             crl_file="$(mktemp)"
             crl_uri=$(echo | timeout 15 openssl s_client -connect "${host%%:*}:443" \
@@ -171,7 +178,7 @@ else
                       | openssl x509 -noout -ext crlDistributionPoints 2>/dev/null \
                       | sed -n 's/^ *URI:\(http[^ ]*\).*/\1/p' | head -1)
             if [ -n "$crl_uri" ] && curl -sSf --max-time 15 -o "$crl_file" "$crl_uri" 2>/dev/null; then
-                extra=(--crl "$crl_file")
+                extra+=(--crl "$crl_file")
             else
                 echo "  NOTE: $host: could not fetch CRL (${crl_uri:-no CRL DP}); running without it"
             fi

@@ -46,6 +46,9 @@ procedure TLS_Blocking_Server is
    --  handshake signature goes through Software_Signer,
    --  standing in for a YubiKey, TPM, HSM or separate signing process.
    External_Sign : Boolean := False;
+   --  --non-fips: also negotiate ChaCha20, standalone X25519 and TLS 1.2
+   --  without EMS (see SPARKTLS.FIPS_Mode). The protocol lanes use it.
+   Algorithms : SPARKTLS.FIPS_Mode := SPARKTLS.FIPS;
 
    --  TLS 1.2 ticket encryption keys (RFC 5077). One TEK generated
    --  at startup with a fixed Key_ID; rotates only on restart.
@@ -264,6 +267,7 @@ procedure TLS_Blocking_Server is
           Get_TEK_By_Id       =>
             SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access,
           Get_Time            => Now_UTC'Unrestricted_Access,
+          Algorithms          => Algorithms,
           others              => <>), Server_Pool.Handshakes);
 
       --  Handshake + data loop
@@ -443,7 +447,7 @@ begin
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &
                 " [--identity <cert.pem> <key.pem>]..." &
                 " [--mtls <ca.pem>] [--staple <ocsp.der>] [--external-sign]" &
-                " [--external-sign-corrupt|--external-sign-refuse]");
+                " [--external-sign-corrupt|--external-sign-refuse] [--non-fips]");
       return;
    end if;
 
@@ -557,6 +561,13 @@ begin
                Put_Line ("Warning: failed to load trust store, mTLS disabled");
             end if;
          end;
+      end if;
+   end loop;
+
+   for I in 3 .. Ada.Command_Line.Argument_Count loop
+      if Ada.Command_Line.Argument (I) = "--non-fips" then
+         Algorithms := SPARKTLS.Non_FIPS;
+         Put_Line ("Algorithms: Non_FIPS");
       end if;
    end loop;
 

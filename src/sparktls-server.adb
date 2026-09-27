@@ -506,7 +506,8 @@ is
                     | Suite_AES_256_GCM_SHA384
                     | Suite_CHACHA20_POLY1305_SHA256
               or else
-                not (S.HC.Client_Has_X25519
+                not ((S.HC.Client_Has_X25519
+                      and then Group_Allowed (S.HC.Cfg.Algorithms, Group_X25519))
                      or S.HC.Client_Has_P256
                      or S.HC.Client_Has_P384
                      or S.HC.Client_Has_X25519MLKEM768

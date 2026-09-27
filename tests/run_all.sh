@@ -137,6 +137,18 @@ if [ -f cli/alire.toml ]; then
     build_or_die "CLI" cli
 fi
 
+#  The FIPS integrity post-link tool (tools/fips_inject); the integration
+#  lane injects and checks a linked example with it.
+if [ -f tools/fips_inject/fips_inject.gpr ]; then
+    eval $(alr -n --no-tty printenv --unix)
+    if ! gprbuild -q -P tools/fips_inject/fips_inject.gpr 2>&1 | tail -3; then :; fi
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -ne 0 ]; then
+        echo "FATAL: fips_inject build failed (exit $rc)"
+        exit 1
+    fi
+fi
+
 # Build x509 validator if .gpr exists
 if [ -f tests/x509/x509_validate.gpr ]; then
     eval $(alr -n --no-tty printenv --unix)

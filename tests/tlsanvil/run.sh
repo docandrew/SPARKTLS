@@ -86,10 +86,12 @@ docker_run pull ghcr.io/tls-attacker/tlsanvil:latest 2>&1 | tail -1
 #  RFC 8422 5.3 obliges us to refuse them (handshake_failure), which Anvil
 #  scores as a failure. With an RSA identity alongside, the server selects
 #  it for those clients (Config.Identities) and the handshake completes.
+#  --non-fips: Anvil scores conformance across every algorithm, ChaCha20
+#  and X25519 included, as it did before FIPS became the default.
 "$SERVER" "$REPO_ROOT/tests/certs/p256.crt" \
           "$REPO_ROOT/tests/certs/p256.key" \
           --identity "$REPO_ROOT/tests/certs/rsa2056.crt" \
-                     "$REPO_ROOT/tests/certs/rsa2056.key" 2>/dev/null &
+                     "$REPO_ROOT/tests/certs/rsa2056.key" --non-fips 2>/dev/null &
 sleep 2
 
 if ! ss -tlnp 2>/dev/null | grep -q ":$PORT "; then

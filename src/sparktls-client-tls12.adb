@@ -1007,7 +1007,9 @@ is
             return;
          end if;
 
-         if not Selected_Group_Allowed_TLS12 (S.HC.Cfg.Client_Key_Share_Group, S.HC.KE.Curve) then
+         if not Selected_Group_Allowed_TLS12 (S.HC.Cfg.Client_Key_Share_Group, S.HC.KE.Curve)
+           or else not Group_Allowed (S.HC.Cfg.Algorithms, S.HC.KE.Curve)
+         then
             Reset (D.Reasm);
             Send_Alert_And_Error (S, Illegal_Parameter, Result);
             return;
