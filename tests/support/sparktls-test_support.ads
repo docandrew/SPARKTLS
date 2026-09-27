@@ -109,4 +109,9 @@ is
    function Write_Keys (S : Session) return Traffic_Keys;
    function Write_Cache_Erased (S : Session) return Boolean;
    procedure Fill_Output (S : in out Session);
+
+   --  Non-ghost views of both traffic key sets, for the Error_State scrub
+   --  regression (SPARKTLS.Client_App / Server_App are ghost).
+   function Client_Keys (S : Session) return Traffic_Keys;
+   function Server_Keys (S : Session) return Traffic_Keys;
 end SPARKTLS.Test_Support;

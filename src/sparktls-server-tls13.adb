@@ -279,8 +279,7 @@ is
       Dummy : N32;
    begin
       null; -- debug removed
-      S.Last_Error := Err;
-      Set_State (S, Error_State);
+      Enter_Error_State (S, Err);
       Abort_Flight (S);
       Records.Build_Plaintext_Alert
         (Level     => 2,  --  fatal
@@ -300,12 +299,8 @@ is
      Post =>
        S.State = Error_State and then S.Last_Error = Err and then Result in Has_Output | Error_Alert
    is
-      Dummy       : N32;
-      --  Captured before Set_State below, which overwrites S.State.
-      Entry_State : constant Connection_State := S.State;
+      Dummy : N32;
    begin
-      Set_State (S, Error_State);
-      S.Last_Error := Err;
       --  RFC 8446 5.2 / RFC 5246 7.2.1: an ENCRYPTED alert needs established
       --  application keys. In Idle they do not exist yet; in Closed or
       --  Error_State the session is already torn down. Emitting a record
@@ -313,7 +308,8 @@ is
       --  so report the error to the caller without putting bytes on the
       --  wire. This is a RUNTIME guard on purpose: shipped builds compile
       --  without -gnata, so the old precondition enforced nothing here.
-      if Entry_State in Idle | Closed | Error_State then
+      if S.State in Idle | Closed | Error_State then
+         Enter_Error_State (S, Err);
          Result := Error_Alert;
          return;
       end if;
@@ -324,6 +320,9 @@ is
          Keys      => S.Server_App,
          Output    => S.Output,
          Bytes_Out => Dummy);
+      --  After the alert: the record above is encrypted under the keys
+      --  Enter_Error_State zeroes.
+      Enter_Error_State (S, Err);
       if Output_Pending (S) > 0 then
          Result := Has_Output;
       else
@@ -719,8 +718,7 @@ is
                   if Ready_To_Build then
                      if S.HC.Cfg not in Ready_Config then
                         --  Fail closed, as Advance's guard does.
-                        S.Last_Error := Internal_Error;
-                        Set_State (S, Error_State);
+                        Enter_Error_State (S, Internal_Error);
                         Result := Error_Alert;
                      else
                         declare
@@ -765,8 +763,7 @@ is
                           (S, D, Frag, True, Rec.Record_Len, Ready_To_Build, Result);
                         if Ready_To_Build then
                            if S.HC.Cfg not in Ready_Config then
-                              S.Last_Error := Internal_Error;
-                              Set_State (S, Error_State);
+                              Enter_Error_State (S, Internal_Error);
                               Result := Error_Alert;
                            else
                               declare
@@ -1232,8 +1229,7 @@ is
          Bytes_Out  => Enc_Out);
 
       if Enc_Out = 0 then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Insufficient_Buffer);
          Result := Error_Alert;
          Emitted := False;
       else
@@ -1262,8 +1258,7 @@ is
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Insufficient_Buffer);
             Result := Error_Alert;
             Emitted := False;
          else
@@ -1280,8 +1275,7 @@ is
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Insufficient_Buffer);
             Result := Error_Alert;
             Emitted := False;
             return;
@@ -1296,8 +1290,7 @@ is
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Insufficient_Buffer);
             Result := Error_Alert;
             Emitted := False;
          else
@@ -1336,8 +1329,7 @@ is
         or else (for some I in 0 .. Max_Pool_Size - 1
                  => Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
       then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -1353,8 +1345,7 @@ is
         or else Cert_Len >= Transcript_Capacity
         or else Cert_Len > 2 * Max_Fragment
       then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -1807,8 +1798,7 @@ is
            (Fragment => SH_Buf (0 .. SH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
 
          if Rec_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Insufficient_Buffer);
             Result := Error_Alert;
             return;
          end if;
@@ -1834,8 +1824,7 @@ is
          if not S.HC.Sent_HRR_CCS then
             Records.Build_CCS_Record (S.Output, CCS_Out);
             if CCS_Out = 0 then
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Insufficient_Buffer);
                Result := Error_Alert;
                return;
             end if;
@@ -2401,8 +2390,7 @@ is
                Verify_Client_Finished (S, D, Msg, Msg'Length, Msg_Len, Result);
 
             when others =>
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Internal_Error);
                Result := Error_Alert;
          end case;
       end Dispatch_Client_Auth_Message;
@@ -2564,8 +2552,7 @@ is
                   Abort_Flight (S);
                   Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                end;
-               S.Last_Error := Unexpected_Message;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Unexpected_Message);
                if Output_Pending (S) > 0 then
                   Result := Has_Output;
                else
@@ -2601,8 +2588,7 @@ is
                      Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
-                  S.Last_Error := Decode_Error;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Decode_Error);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -2629,8 +2615,7 @@ is
                      Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Unexpected_Message);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -2646,8 +2631,7 @@ is
                      Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Unexpected_Message);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -2719,8 +2703,7 @@ is
    begin
       Abort_Flight (S);
       Records.Build_Alert_Record (2, Desc, S.Server_App, S.Output, Ignored_A);
-      S.Last_Error := Err;
-      Set_State (S, Error_State);
+      Enter_Error_State (S, Err);
       if Output_Pending (S) > 0 then
          Result := Has_Output;
       else
@@ -3180,9 +3163,8 @@ is
                Abort_Flight (S);
                Records.Build_Alert_Record
                  (2, (if Is_Known then 50 else 10), S.Server_App, S.Output, Ignored_A);
-               S.Last_Error := (if Is_Known then Decode_Error else Unexpected_Message);
+               Enter_Error_State (S, (if Is_Known then Decode_Error else Unexpected_Message));
             end;
-            Set_State (S, Error_State);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -3198,8 +3180,7 @@ is
                Abort_Flight (S);
                Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
             end;
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -3290,8 +3271,7 @@ is
                Abort_Flight (S);
                Records.Build_Alert_Record (2, AD_Bad_Record_MAC, S.Server_App, S.Output, Ignored_A);
             end;
-            S.Last_Error := Bad_Record_MAC;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Bad_Record_MAC);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -3303,8 +3283,7 @@ is
          if Inner_Type = 16#15# and then Plain_Len >= 2 then
             --  Peer sent alert: report its description. The old
             --  Error_Code'Val mapped the byte by enum position.
-            S.Last_Error := Error_From_Alert (Plaintext (1));
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Error_From_Alert (Plaintext (1)));
             Result := Error_Alert;
             return;
          elsif Inner_Type /= 16#16# then
@@ -3315,8 +3294,7 @@ is
                Abort_Flight (S);
                Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
             end;
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -3468,8 +3446,7 @@ is
                   Abort_Flight (S);
                   Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                end;
-               S.Last_Error := Unexpected_Message;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Unexpected_Message);
                if Output_Pending (S) > 0 then
                   Result := Has_Output;
                else
@@ -3498,8 +3475,7 @@ is
             if Rec.Content = Records.Content_Alert then
                --  Plaintext alert during post-ServerHello handshake.
                --  Just close  do not respond.
-               S.Last_Error := Unexpected_Message;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Unexpected_Message);
                Result := Error_Alert;
             else
                --  Send encrypted alert for other unexpected record types.
@@ -3764,8 +3740,7 @@ is
          if Rec.Content = Records.Content_Alert then
             --  RFC 8446 5.1: unencrypted alert after handshake.
             --  Just close  do not respond with an alert.
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             Result := Error_Alert;
          else
             --  CCS after Finished and other unexpected types get rejected.
@@ -3809,8 +3784,7 @@ is
                   Output    => S.Output,
                   Bytes_Out => Ignored_Alert_Out);
             end;
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -3834,8 +3808,7 @@ is
                   Output    => S.Output,
                   Bytes_Out => Ignored_Alert_Out);
             end;
-            S.Last_Error := Record_Overflow;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Record_Overflow);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -3869,8 +3842,7 @@ is
                   Output    => S.Output,
                   Bytes_Out => Ignored_Alert_Out);
             end;
-            Set_State (S, Error_State);
-            S.Last_Error := Bad_Record_MAC;
+            Enter_Error_State (S, Bad_Record_MAC);
             --  Return Has_Output to drain the alert before Error_Alert
             if Output_Pending (S) > 0 then
                --  RFC 8446 5.2: AEAD-failure invariant: alert
@@ -3917,8 +3889,7 @@ is
                         Abort_Flight (S);
                         Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                      end;
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Unexpected_Message);
                      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                   else
                      S.Empty_Records_Recvd := S.Empty_Records_Recvd + 1;
@@ -3966,8 +3937,7 @@ is
                      Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                   end;
-                  S.Last_Error := Decode_Error;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Decode_Error);
                   Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
                   --  Bogus level (BoGo SendBogusAlertType: 0x42).
@@ -3977,8 +3947,7 @@ is
                      Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Illegal_Parameter, S.Server_App, S.Output, Ignored_A);
                   end;
-                  S.Last_Error := Illegal_Parameter;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Illegal_Parameter);
                   Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                elsif Plaintext (1) = 0 then
                   --  close_notify. RFC 8446 6.1: each side sends exactly
@@ -4028,8 +3997,7 @@ is
                            Abort_Flight (S);
                            Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                         end;
-                        S.Last_Error := Decode_Error;
-                        Set_State (S, Error_State);
+                        Enter_Error_State (S, Decode_Error);
                         Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                      else
                         S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
@@ -4042,16 +4010,14 @@ is
                         Abort_Flight (S);
                         Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                      end;
-                     S.Last_Error := Decode_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Decode_Error);
                      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                   end if;
                else
                   --  Fatal alert from peer (level=2): close without
                   --  reply per RFC 8446 6.2 (no alerts about alerts);
                   --  report its description.
-                  S.Last_Error := Error_From_Alert (Plaintext (1));
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Error_From_Alert (Plaintext (1)));
                   Result := Error_Alert;
                end if;
 
@@ -4071,8 +4037,7 @@ is
       if S.HC.Cfg not in Ready_Config
         or else S.Negotiated_Suite not in TLS13_Suite
       then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -4104,8 +4069,7 @@ is
             Process_Client_Finished (S, D, Result);
 
          when others =>
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
       end case;
    end Advance_Handshake_13;

@@ -126,6 +126,9 @@ is
    function Write_Keys (S : Session) return Traffic_Keys is
      (if S.Role = Role_Client then S.Client_App else S.Server_App);
 
+   function Client_Keys (S : Session) return Traffic_Keys is (S.Client_App);
+   function Server_Keys (S : Session) return Traffic_Keys is (S.Server_App);
+
    function Write_Cache_Erased (S : Session) return Boolean is
       use type SPARKTLSCrypto.AES_GCM.Prepared_Key;
    begin

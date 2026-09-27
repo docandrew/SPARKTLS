@@ -15,8 +15,7 @@ begin
    --  and fail the session rather than move Read_Pos past Write_Pos.
    if Bytes_Sent > Count then
       Bytes_Sent := 0;
-      Set_State (S, Error_State);
-      S.Last_Error := Internal_Error;
+      Enter_Error_State (S, Internal_Error);
       return;
    end if;
    S.Output.Read_Pos := S.Output.Read_Pos + Bytes_Sent;

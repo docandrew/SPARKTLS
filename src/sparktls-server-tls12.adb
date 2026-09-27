@@ -56,16 +56,12 @@ is
       Dummy : N32;
    begin
       Abort_Flight (S);
-      S.Last_Error := Err;
-      Set_State (S, Error_State);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       --  When the output buffer is full, no alert byte hit the wire;
       --  collapse the recorded error to Unexpected_Message so the
       --  Error_Has_Alert ghost remains satisfied (RFC 8446 6 lets
       --  Unexpected_Message close silently).
-      if Output_Pending (S) = 0 then
-         S.Last_Error := Unexpected_Message;
-      end if;
+      Enter_Error_State (S, (if Output_Pending (S) > 0 then Err else Unexpected_Message));
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
@@ -91,9 +87,7 @@ is
    procedure Send_Encrypted_Alert_12 (S : in out Session; Err : Error_Code; Result : out Action) is
       Dummy : N32;
    begin
-      Set_State (S, Error_State);
       Abort_Flight (S);
-      S.Last_Error := Err;
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
          Desc        => Alert_Desc (Err),
@@ -101,6 +95,9 @@ is
          Implicit_IV => S.HC.Server_Write_IV_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
+      --  After the alert: the record above is encrypted under the keys
+      --  Enter_Error_State zeroes.
+      Enter_Error_State (S, Err);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_12;
 
@@ -117,9 +114,7 @@ is
    is
       Dummy : N32;
    begin
-      Set_State (S, Error_State);
       Abort_Flight (S);
-      S.Last_Error := Err;
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
          Desc        => Alert_Desc (Err),
@@ -127,6 +122,9 @@ is
          Implicit_IV => S.Server_IV_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
+      --  After the alert: the record above is encrypted under the keys
+      --  Enter_Error_State zeroes.
+      Enter_Error_State (S, Err);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_Connected_12;
 
@@ -682,8 +680,7 @@ is
          --  and the prover cannot link the Cfg copy back to S.HC.Cfg. Three
          --  null checks, semantically unreachable, fail closed.
          if S.HC.Cfg not in Ready_Config then
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -1093,8 +1090,7 @@ is
             Hello_Len : N32;
          begin
             if S.HC.Cfg not in Ready_Config then
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Internal_Error);
                Result := Error_Alert;
                return;
             end if;
@@ -1618,8 +1614,7 @@ is
          end if;
       else
          --  Peer's alert: report its description.
-         S.Last_Error := Error_From_Alert (Alert_Desc);
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Error_From_Alert (Alert_Desc));
          Result := Error_Alert;
       end if;
    end Consume_CKE_Phase_Alert_12;
@@ -2042,8 +2037,7 @@ is
       then
          --  Fail closed (Init's gate makes this unreachable).
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -2163,8 +2157,7 @@ is
         or else S.State not in Wait_Client_Certificate | Wait_Client_Cert_Verify
       then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -2563,8 +2556,7 @@ is
             if not Rand_OK then
                --  No nonce, no ticket, and the flight is aborted with the
                --  reason.
-               S.Last_Error := Entropy_Failure;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Entropy_Failure);
                OK := False;
                return;
             end if;
@@ -2613,8 +2605,7 @@ is
                Result        => NST_Buf,
                Len           => NST_Total);
             if NST_Total = 0 then
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Insufficient_Buffer);
                OK := False;
                return;
             end if;
@@ -2634,8 +2625,7 @@ is
                --  state still pre-CCS).
                Records.Build_Handshake_Record (NST_Data, S.Output, NST_Rec_Out);
                if NST_Rec_Out = 0 then
-                  S.Last_Error := Insufficient_Buffer;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Insufficient_Buffer);
                   OK := False;
                   return;
                end if;
@@ -2671,8 +2661,7 @@ is
 
          Records.Build_CCS_Record (S.Output, CCS_Out);
          if CCS_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Insufficient_Buffer);
             return;
          end if;
 
@@ -2690,8 +2679,7 @@ is
          if EO = 0 then
             --  Fatal path: no rewind, the burned nonce stays
             --  burned and the connection dies here.
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Insufficient_Buffer);
             return;
          end if;
 
@@ -2951,8 +2939,7 @@ is
             end if;
 
          when others                                            =>
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
       end case;
    end Advance_Handshake_12;
@@ -3121,8 +3108,7 @@ is
                      --  triggers the error either way) and it is what makes the
                      --  narrowed field subtype and its AoRTE check provable.
                      if S.Empty_Records_Recvd >= Max_Empty_Records then
-                        S.Last_Error := Unexpected_Message;
-                        Set_State (S, Error_State);
+                        Enter_Error_State (S, Unexpected_Message);
                         Result := Error_Alert;
                      else
                         S.Empty_Records_Recvd := S.Empty_Records_Recvd + 1;
@@ -3168,9 +3154,8 @@ is
                      end if;
                   else
                      --  Peer's fatal alert: report its description.
-                     S.Last_Error :=
-                       (if PL >= 2 then Error_From_Alert (Plaintext (1)) else Unexpected_Message);
-                     Set_State (S, Error_State);
+                     Enter_Error_State
+                       (S, (if PL >= 2 then Error_From_Alert (Plaintext (1)) else Unexpected_Message));
                      Result := Error_Alert;
                   end if;
 
@@ -3179,8 +3164,7 @@ is
                   --  content type is unexpected_message, not something to
                   --  skip. Silently returning OK let a peer feed us
                   --  records we neither processed nor rejected.
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Unexpected_Message);
                   Result := Error_Alert;
             end case;
          end;

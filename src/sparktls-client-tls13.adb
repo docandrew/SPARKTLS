@@ -54,14 +54,7 @@ is
      Post =>
        S.State = Error_State
        and then S.Last_Error = Err
-       and then Result in
-                  Has_Output
-                  | Error_Alert
-                  --  Frame: post-handshake app key is not touched (only
-                  --  the handshake-secret key is used to encrypt the
-                  --  alert). Pin so callers can preserve
-                  --  Nonce_Space_Available (S.Client_App).
-       and then S.Client_App = S.Client_App'Old
+       and then Result in Has_Output | Error_Alert
        and then S.Negotiated_Suite = S.Negotiated_Suite'Old
    is
       A1, A2 : N32;
@@ -76,8 +69,7 @@ is
          Keys      => S.HC.Client_HS,
          Output    => S.Output,
          Bytes_Out => A2);
-      S.Last_Error := Err;
-      S.State := Error_State;
+      Enter_Error_State (S, Err);
       Result :=
         (if A1 > 0 or else A2 > 0 or else Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_HS_Encrypted_Alert;
@@ -101,8 +93,7 @@ is
          Keys      => S.Client_App,
          Output    => S.Output,
          Bytes_Out => A);
-      S.Last_Error := Err;
-      S.State := Error_State;
+      Enter_Error_State (S, Err);
       Result := (if A > 0 or else Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_App_Encrypted_Alert;
 
@@ -1003,10 +994,9 @@ is
        and then S.HC.Cfg.Trust /= null
        and then S.HC.Cfg.Get_Time /= null,
      Post =>
-       S.Client_App = S.Client_App'Old
-       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+       S.Negotiated_Suite = S.Negotiated_Suite'Old
        and then Result in OK | Error_Alert
-       and then (if Result = OK then S.State = S.State'Old
+       and then (if Result = OK then S.State = S.State'Old and S.Client_App = S.Client_App'Old
                  else S.State = Error_State);
 
    procedure Check_Revocation_13
@@ -1039,16 +1029,13 @@ is
          when SPARKTLS.Revocation.Proceed =>
             null;
          when SPARKTLS.Revocation.Fail_Revoked =>
-            S.Last_Error := Certificate_Revoked;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Certificate_Revoked);
             Result := Error_Alert;
          when SPARKTLS.Revocation.Fail_Bad_Status =>
-            S.Last_Error := Bad_Certificate_Status_Response;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Bad_Certificate_Status_Response);
             Result := Error_Alert;
          when SPARKTLS.Revocation.Fail_No_Evidence =>
-            S.Last_Error := Bad_Certificate;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Bad_Certificate);
             Result := Error_Alert;
       end case;
    end Check_Revocation_13;
@@ -1669,8 +1656,7 @@ is
         or else (for some I in 0 .. Max_Pool_Size - 1
                  => S.HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
       then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -1689,8 +1675,7 @@ is
             Len           => Cert_Len);
          if Cert_Len = 0 or else Cert_Len >= Transcript_Capacity or else Cert_Len > Max_Fragment
          then
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -1833,8 +1818,7 @@ is
       end;
 
       if Enc_Out = 0 then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Insufficient_Buffer);
          Result := Error_Alert;
          return;
       end if;
@@ -1907,8 +1891,7 @@ is
          Bytes_Out  => Enc_Out);
 
       if Enc_Out = 0 then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Insufficient_Buffer);
          Result := Error_Alert;
          return;
       end if;
@@ -1992,8 +1975,7 @@ is
             begin
                Records.Build_CCS_Record (S.Output, Pre_CCS_Out);
                if Pre_CCS_Out = 0 then
-                  S.Last_Error := Insufficient_Buffer;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Insufficient_Buffer);
                   Result := Error_Alert;
                   return;
                end if;
@@ -2004,8 +1986,7 @@ is
          Send_Client_Certificate (S, D, Cert_Result);
          if Cert_Result /= OK then
             if S.State = Wait_Server_Finished then
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Insufficient_Buffer);
             end if;
             Result := Error_Alert;
             return;
@@ -2322,8 +2303,7 @@ is
                Fill_Decrypted_HS_Reassembly (D, Plaintext, Plain_Len, Pos, Decode_Failed);
 
                if Decode_Failed then
-                  S.Last_Error := Decode_Error;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Decode_Error);
                   Result := Error_Alert;
                   return;
                end if;
@@ -2335,8 +2315,7 @@ is
             --  it to. Peer-declared, so it is checked rather than trusted.
             if Message_Length (D.Reasm) > Transcript_Capacity then
                Reset (D.Reasm);
-               S.Last_Error := Decode_Error;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Decode_Error);
                Result := Error_Alert;
                return;
             end if;
@@ -2368,8 +2347,7 @@ is
          --  Reject oversize HS messages early so we do not allocate
          --  beyond what we can transcript.
          if Msg_Total > Transcript_Capacity then
-            S.Last_Error := Decode_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Decode_Error);
             Result := Error_Alert;
             Pos := Plain_Len;
             return;
@@ -2407,8 +2385,7 @@ is
                               and then S.HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
                      or else S.HC.Client_HS.Counter > Unsigned_64'Last - 2)
          then
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
             Pos := Plain_Len;
             return;
@@ -2580,9 +2557,8 @@ is
                 | Suite_AES_256_GCM_SHA384
                 | Suite_CHACHA20_POLY1305_SHA256);
          if Frag_Len <= Records.Tag_Size then
-            S.Last_Error := Decode_Error;
             S.Input.Read_Pos := Next_Read;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Decode_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -2620,8 +2596,7 @@ is
             Process_Decrypted_Handshake_Bytes (S, D, Plaintext, Plain_Len, Result);
          elsif Inner_Type = 16#15# then
             --  Alert
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             Result := Error_Alert;
          else
             --  RFC 8446 5.2: if the decrypted inner content type
@@ -2633,11 +2608,14 @@ is
             --
             --  This used to be `Result := OK`, which let a peer
             --  feed us records we neither processed nor rejected.
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             Result := Error_Alert;
          end if;
-         S.HC.Server_HS := Server_HS_Copy;
+         --  Commit the advanced read counter, unless the record failed the
+         --  session: Enter_Error_State zeroed the key and it stays zeroed.
+         if S.State /= Error_State then
+            S.HC.Server_HS := Server_HS_Copy;
+         end if;
       end;
    end Handle_Encrypted_App_Data;
 
@@ -2661,15 +2639,13 @@ is
          --  must be 0x03xx with minor in 1..4. Anything else
          --  (BoGo CheckRecordVersion: 0x03FF) -> fatal
          --  protocol_version alert.
-         S.Last_Error := Protocol_Version;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Protocol_Version);
          Result := Error_Alert;
          return;
       end if;
 
       if Rec.Overflow then
-         S.Last_Error := Records.Overflow_Error (Rec, Read_Encrypted => True);
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Records.Overflow_Error (Rec, Read_Encrypted => True));
          Result := Error_Alert;
          return;
       end if;
@@ -3387,8 +3363,7 @@ is
                   --  Fatal alert from peer: close without replying
                   --  (RFC 8446 6.2: don't send alerts about alerts);
                   --  report its description.
-                  S.Last_Error := Error_From_Alert (Plaintext (1));
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Error_From_Alert (Plaintext (1)));
                   Result := Error_Alert;
                end if;
 
@@ -3424,8 +3399,7 @@ is
          --  must be 0x03xx with minor in 1..4. Anything else
          --  (BoGo CheckRecordVersion: 0x03FF) -> fatal
          --  protocol_version alert.
-         S.Last_Error := Protocol_Version;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Protocol_Version);
          Result := Error_Alert;
          return;
       end if;
@@ -3465,8 +3439,7 @@ is
             --  RFC 8446 5.1: an unencrypted alert after the handshake.
             --  Close without answering (no alerts about alerts), as the
             --  server does.
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             Result := Error_Alert;
          else
             --  CCS, plaintext handshake, or an unknown type: reject with
@@ -3484,8 +3457,7 @@ is
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data) is
    begin
       if S.Negotiated_Suite not in TLS13_Suite then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          return;
       end if;
 
@@ -3500,8 +3472,7 @@ is
       --  Keep the defensive check here rather than exporting that derived
       --  fact as a precondition on every TLS 1.3 entry point.
       if S.Negotiated_Suite not in TLS13_Suite then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -3555,8 +3526,7 @@ is
             end if;
 
          when others =>
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
       end case;
    end Advance_Handshake_13;

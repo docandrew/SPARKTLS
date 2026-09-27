@@ -57,8 +57,7 @@ is
       Dummy : N32;
    begin
       Abort_Flight (S);
-      S.Last_Error := Err;
-      Set_State (S, Error_State);
+      Enter_Error_State (S, Err);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
@@ -69,9 +68,7 @@ is
    is
       Dummy : N32;
    begin
-      Set_State (S, Error_State);
       Abort_Flight (S);
-      S.Last_Error := Err;
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
          Desc        => Alert_Desc (Err),
@@ -79,6 +76,9 @@ is
          Implicit_IV => S.Client_IV_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
+      --  After the alert: the record above is encrypted under the keys
+      --  Enter_Error_State zeroes.
+      Enter_Error_State (S, Err);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_Connected_12;
 
@@ -2366,8 +2366,7 @@ is
         (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
-         S.Last_Error := Protocol_Version;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Protocol_Version);
          Result := Error_Alert;
          return;
       end if;
@@ -2411,8 +2410,7 @@ is
                return;
             elsif Lvl = 2 then
                --  Peer's fatal alert: report its description.
-               S.Last_Error := Error_From_Alert (Dsc);
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Error_From_Alert (Dsc));
                Result := Error_Alert;
                return;
             else
@@ -3135,8 +3133,7 @@ is
         (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
-         S.Last_Error := Protocol_Version;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Protocol_Version);
          Result := Error_Alert;
          return;
       end if;
@@ -3255,8 +3252,7 @@ is
 
       Reset (D.Reasm);
       Abort_Flight (S);
-      S.Last_Error := Err;
-      Set_State (S, Error_State);
+      Enter_Error_State (S, Err);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Finished_Error_12;
 
@@ -3436,8 +3432,7 @@ is
         (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
-         S.Last_Error := Protocol_Version;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Protocol_Version);
          Result := Error_Alert;
          return;
       end if;
@@ -3654,8 +3649,7 @@ is
       --  terminal. Reporting Error_Alert idempotently mirrors the Closed
       --  arm's idempotent Shutdown in Advance_Client_Non_Handshake.
       if S.State in Idle | Closing | Closed | Error_State then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
          return;
       end if;
@@ -3694,8 +3688,7 @@ is
         (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
-         S.Last_Error := Protocol_Version;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Protocol_Version);
          Result := Error_Alert;
          return;
       end if;
@@ -3731,8 +3724,7 @@ is
       --  later with bad_record_mac instead of here.
       if Rec.Content not in Records.Content_Application_Data | Records.Content_Alert then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         S.Last_Error := Unexpected_Message;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Unexpected_Message);
          Result := Error_Alert;
          return;
       end if;
@@ -3828,8 +3820,7 @@ is
                      --  triggers the error either way) and it is what makes the
                      --  narrowed field subtype and its AoRTE check provable.
                      if S.Empty_Records_Recvd >= Max_Empty_Records then
-                        S.Last_Error := Unexpected_Message;
-                        Set_State (S, Error_State);
+                        Enter_Error_State (S, Unexpected_Message);
                         Result := Error_Alert;
                      else
                         S.Empty_Records_Recvd := S.Empty_Records_Recvd + 1;
@@ -3888,8 +3879,7 @@ is
                      --  triggers the error either way) and it is what makes the
                      --  narrowed field subtype and its AoRTE check provable.
                      if S.Warning_Alerts_Recvd >= Max_Warning_Alerts then
-                        S.Last_Error := Decode_Error;
-                        Set_State (S, Error_State);
+                        Enter_Error_State (S, Decode_Error);
                         Result := Error_Alert;
                      else
                         S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
@@ -3910,8 +3900,7 @@ is
                   --  content type is unexpected_message, not something to
                   --  skip. Silently returning OK let a peer feed us
                   --  records we neither processed nor rejected.
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Unexpected_Message);
                   Result := Error_Alert;
             end case;
          end;

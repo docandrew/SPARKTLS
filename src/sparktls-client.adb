@@ -204,8 +204,7 @@ is
         (S.Ticket, S.Get_Time, S.HC, D.Arena_Storage, CH_Buf, CH_Len);
 
       if CH_Len = 0 then
-         Set_State (S, Error_State);
-         S.Last_Error := (if S.HC.Ext_Parse_Err = Entropy_Failure then Entropy_Failure else Internal_Error);
+         Enter_Error_State (S, (if S.HC.Ext_Parse_Err = Entropy_Failure then Entropy_Failure else Internal_Error));
          return;
       end if;
 
@@ -294,8 +293,7 @@ is
         (Fragment => CH_Buf (0 .. CH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
 
       if Rec_Out = 0 then
-         Set_State (S, Error_State);
-         S.Last_Error := Insufficient_Buffer;
+         Enter_Error_State (S, Insufficient_Buffer);
       else
          OK := True;
       end if;
@@ -316,14 +314,12 @@ is
          others => <>)
       do
          if not Client_Config_Can_Start (Cfg, Resume_Usable) then
-            Set_State (S, Error_State);
-            S.Last_Error := Bad_Configuration;
+            Enter_Error_State (S, Bad_Configuration);
          else
             SPARKTLS.HS_Pool.Acquire (Pool, S.Slot);
 
             if S.Slot = No_Slot then
-               S.State := Error_State;
-               S.Last_Error := No_Free_Sessions;
+               Enter_Error_State (S, No_Free_Sessions);
             else
                --  RFC 8446 4.6.1: a usable saved ticket rides in the CH as pre_shared_key;
                --  the binder derives from its PSK.
@@ -505,8 +501,7 @@ is
       begin
          if HS_Total > Max_HS_Msg or else HS_Total > Transcript_Capacity then
             S.Input.Read_Pos := Next_Read;
-            S.Last_Error := Decode_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Decode_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -558,8 +553,7 @@ is
             if Message_Too_Large (D.Reasm) or else Declared_Size (D.Reasm) > Transcript_Capacity
             then
                Reset (D.Reasm);
-               S.Last_Error := Decode_Error;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Decode_Error);
                Result := Error_Alert;
                return;
             end if;
@@ -604,8 +598,7 @@ is
              (Message_Too_Large (D.Reasm) or else Declared_Size (D.Reasm) > Transcript_Capacity)
          then
             Reset (D.Reasm);
-            S.Last_Error := Decode_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Decode_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -697,7 +690,7 @@ is
                   Output    => S.Output,
                   Bytes_Out => Ignored_A);
             end;
-            S.State := Error_State;
+            Enter_Error_State (S, S.Last_Error);
             Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
             Reset (D.Reasm);
             return;
@@ -706,8 +699,7 @@ is
          if S.Version = TLS_Undetermined then
             S.Version := Candidate;
          elsif S.Version /= Candidate then
-            S.Last_Error := Illegal_Parameter;
-            S.State := Error_State;
+            Enter_Error_State (S, Illegal_Parameter);
             Result := Error_Alert;
             Reset (D.Reasm);
             return;
@@ -738,8 +730,7 @@ is
                      Output    => S.Output,
                      Bytes_Out => Ignored_A);
                end;
-               S.Last_Error := Unexpected_Message;
-               S.State := Error_State;
+               Enter_Error_State (S, Unexpected_Message);
                Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                Reset (D.Reasm);
                return;
@@ -762,8 +753,7 @@ is
                 (S.HC.Cfg.TLS12_Resume_Ticket.Valid
                  and then S.HC.Cfg.TLS12_Resume_Ticket.Ticket_Len > Max_TLS12_Ticket_Len)
             then
-               S.Last_Error := Internal_Error;
-               S.State := Error_State;
+               Enter_Error_State (S, Internal_Error);
                Result := Error_Alert;
                Reset (D.Reasm);
                return;
@@ -779,8 +769,7 @@ is
                  (S.Ticket, S.Get_Time, S.HC, D.Arena_Storage, CH2_Buf, CH2_Len,
                   Retry_Mode => True);
                if CH2_Len = 0 or else CH2_Len > N32 (CH2_Buf'Length) then
-                  S.Last_Error := Internal_Error;
-                  S.State := Error_State;
+                  Enter_Error_State (S, Internal_Error);
                   Result := Error_Alert;
                   Reset (D.Reasm);
                   return;
@@ -868,8 +857,7 @@ is
             Result => Rec);
 
          if Rec.Bad_Version then
-            S.Last_Error := Protocol_Version;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Protocol_Version);
             Result := Error_Alert;
             return;
          end if;
@@ -880,8 +868,7 @@ is
          --  check the parser would loop on Need_Input
          --  forever. BoGo LargePlaintext sends maxPlaintext+1.
          if Rec.Overflow then
-            S.Last_Error := Records.Overflow_Error (Rec, Read_Encrypted => False);
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Records.Overflow_Error (Rec, Read_Encrypted => False));
             Result := Error_Alert;
             return;
          end if;
@@ -926,8 +913,7 @@ is
                            Bytes_Out => A);
                         pragma Assert (A <= N32 (S.Output.Storage'Length));
                      end;
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Unexpected_Message);
                      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                   end if;
                end;
@@ -944,14 +930,12 @@ is
                begin
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   if Rec.Fragment_Len /= 2 then
-                     S.Last_Error := Decode_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Decode_Error);
                      Result := Error_Alert;
                   elsif S.Input.Storage (Ix (Alert_Pos)) = 1 and then S.Input.Storage (Ix (Alert_Pos + 1)) /= 0
                   then
                      if S.Warning_Alerts_Recvd >= Max_Warning_Alerts then
-                        S.Last_Error := Decode_Error;
-                        Set_State (S, Error_State);
+                        Enter_Error_State (S, Decode_Error);
                         Result := Error_Alert;
                      else
                         S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
@@ -960,8 +944,7 @@ is
                   elsif S.Input.Storage (Ix (Alert_Pos + 1)) = 0 then
                      --  close_notify before ServerHello: the peer
                      --  hung up mid-handshake. Unchanged behaviour.
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Unexpected_Message);
                      Result := Error_Alert;
                   else
                      --  Fatal alert. Reflect the peer's description
@@ -972,8 +955,7 @@ is
                      --  "unexpected message" hides that. No alert
                      --  is queued in reply -- we are reacting to
                      --  the peer's alert, not raising our own.
-                     S.Last_Error := Error_From_Alert (S.Input.Storage (Ix (Alert_Pos + 1)));
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Error_From_Alert (S.Input.Storage (Ix (Alert_Pos + 1))));
                      Result := Error_Alert;
                   end if;
                end;
@@ -986,8 +968,7 @@ is
                --  (BoGo AppDataBeforeHandshake, expected
                --  ":UNEXPECTED_RECORD:").
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               S.Last_Error := Unexpected_Message;
-               Set_State (S, Error_State);
+               Enter_Error_State (S, Unexpected_Message);
                Result := Error_Alert;
          end case;
       end;
@@ -1011,8 +992,7 @@ is
             Handle_WSH_Frame (S, D, Result);
 
          when others            =>
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
       end case;
    end Advance_Handshake;
@@ -1066,8 +1046,7 @@ is
                      SPARKTLS.Client.TLS13.Process_Connected_13 (S, Result);
 
                   when TLS_Undetermined =>
-                     S.Last_Error := Internal_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Internal_Error);
                      Result := Error_Alert;
                end case;
             end if;
@@ -1084,8 +1063,7 @@ is
                      SPARKTLS.Client.TLS13.Process_Connected_13 (S, Result);
 
                   when TLS_Undetermined =>
-                     S.Last_Error := Internal_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Internal_Error);
                      Result := Error_Alert;
                end case;
             elsif S.Peer_Closed_Cleanly then
@@ -1169,8 +1147,7 @@ is
          --  No slot, or a slot this Pool does not have: the session was
          --  configured with a different pool.
          if S.Slot = No_Slot or else S.Slot > Pool.Size then
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -1204,8 +1181,7 @@ is
                        (S, Pool.Slots (Sl), Result);
 
                   when TLS_Undetermined =>
-                     S.Last_Error := Internal_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Internal_Error);
                      Result := Error_Alert;
                end case;
             end if;
