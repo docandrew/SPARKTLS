@@ -8,7 +8,11 @@
 --  processed, and for any change to the module's bytes since.
 package SPARKTLS.Integrity
   with SPARK_Mode     => On,
-       Abstract_State => (Module_Image with External => Async_Writers)
+       Abstract_State => (Module_Image with External => Async_Writers),
+       --  The image is the loaded binary itself: it exists before any
+       --  elaboration runs. (The body is SPARK_Mode Off, so this is taken
+       --  as stated.)
+       Initializes    => Module_Image
 is
    procedure Check (Intact : out Boolean)
    with Global => (Input => Module_Image);
