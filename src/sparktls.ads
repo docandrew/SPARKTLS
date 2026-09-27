@@ -3550,6 +3550,28 @@ private
       Slot : Slot_Count := No_Slot;
    end record;
 
+   --  The one way into Error_State. Records Err, enters Error_State and
+   --  zeroes every secret the session holds: the traffic keys and secrets
+   --  (as Sanitize_Keys), the ticket secrets (as Scrub_Ticket_Secrets) and
+   --  the handshake context (as Scrub_Handshake_Context). Nothing is sent
+   --  under the session's keys afterwards, so a fatal alert must already
+   --  be queued in Output when this is called. The handshake slot is
+   --  released by Advance or Drop, which hold the pool.
+   procedure Enter_Error_State (S : in out Session; Err : Error_Code)
+   with
+     Post =>
+       S.State = Error_State
+       and S.Last_Error = Err
+       and S.Input.Read_Pos = S.Input.Read_Pos'Old
+       and S.Input.Write_Pos = S.Input.Write_Pos'Old
+       and S.Output.Read_Pos = S.Output.Read_Pos'Old
+       and S.Output.Write_Pos = S.Output.Write_Pos'Old
+       and S.Flight_Start = S.Flight_Start'Old
+       and S.In_Flight = S.In_Flight'Old
+       and S.Slot = S.Slot'Old
+       and S.Version = S.Version'Old
+       and S.Negotiated_Suite = S.Negotiated_Suite'Old;
+
    function State (S : Session) return Connection_State
    is (S.State);
 

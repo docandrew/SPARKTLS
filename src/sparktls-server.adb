@@ -58,8 +58,7 @@ is
       Dummy : N32;
    begin
       null; -- debug removed
-      S.Last_Error := Err;
-      Set_State (S, Error_State);
+      Enter_Error_State (S, Err);
       Abort_Flight (S);
       Records.Build_Plaintext_Alert
         (Level     => 2,  --  fatal
@@ -126,15 +125,13 @@ is
          others => <>)
       do
          if not Server_Config_Can_Start (Cfg) then
-            Set_State (S, Error_State);
-            S.Last_Error := Bad_Configuration;
+            Enter_Error_State (S, Bad_Configuration);
          else
 
             SPARKTLS.HS_Pool.Acquire (Pool, S.Slot);
 
             if S.Slot = No_Slot then
-               Set_State (S, Error_State);
-               S.Last_Error := No_Free_Sessions;
+               Enter_Error_State (S, No_Free_Sessions);
             end if;
          end if;
       end return;
@@ -172,8 +169,7 @@ is
                      SPARKTLS.Server.TLS13.Process_Connected_13 (S, Result);
 
                   when TLS_Undetermined =>
-                     S.Last_Error := Internal_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Internal_Error);
                      Result := Error_Alert;
                end case;
             end if;
@@ -190,8 +186,7 @@ is
                      SPARKTLS.Server.TLS13.Process_Connected_13 (S, Result);
 
                   when TLS_Undetermined =>
-                     S.Last_Error := Internal_Error;
-                     Set_State (S, Error_State);
+                     Enter_Error_State (S, Internal_Error);
                      Result := Error_Alert;
                end case;
             elsif S.Peer_Closed_Cleanly then
@@ -258,8 +253,7 @@ is
 
          when Idle        =>
             --  Genuinely a caller error: Advance before Init/Configure.
-            S.Last_Error := Internal_Error;
-            S.State := Error_State;
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
 
          when others      =>
@@ -282,8 +276,7 @@ is
          --  No slot, or a slot this Pool does not have: the session was
          --  configured with a different pool.
          if Slot = No_Slot or else Slot > Pool.Size then
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Internal_Error);
             Result := Error_Alert;
             return;
          end if;
@@ -303,8 +296,7 @@ is
                     (S, Pool.Slots (Slot), Result);
 
                when TLS_Undetermined =>
-                  S.Last_Error := Internal_Error;
-                  Set_State (S, Error_State);
+                  Enter_Error_State (S, Internal_Error);
                   Result := Error_Alert;
             end case;
          end if;
@@ -647,8 +639,7 @@ is
          if Rec.Content = Records.Content_Alert then
             --  Plaintext alert before handshake  just close
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
+            Enter_Error_State (S, Unexpected_Message);
             Result := Error_Alert;
             return;
          end if;
@@ -1306,14 +1297,12 @@ is
      (S : in out Server_Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action) is
    begin
       if S.HC.Cfg not in Ready_Config then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
       elsif S.State = Wait_Client_Hello then
          Handle_Wait_Client_Hello (S, D, Result);
       else
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
+         Enter_Error_State (S, Internal_Error);
          Result := Error_Alert;
       end if;
    end Advance_Handshake;

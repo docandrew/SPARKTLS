@@ -539,7 +539,31 @@ is
       Bytes_Written := Pos;
    end Write_Plaintext;
 
-   procedure Sanitize_Keys (S : in out Session) is
+   --  Zeroing bodies behind Sanitize_Keys, Scrub_Ticket_Secrets and
+   --  Scrub_Handshake_Context, shared with Enter_Error_State. Their frame
+   --  Posts carry the fields Enter_Error_State promises to leave alone.
+   procedure Zero_Keys (S : in out Session)
+   with
+     Post =>
+       S.Client_App.Key = Bytes_32'(others => 0)
+       and S.Server_App.Key = Bytes_32'(others => 0)
+       and S.Client_App.IV = Bytes_12'(others => 0)
+       and S.Server_App.IV = Bytes_12'(others => 0)
+       and S.Res_Master = Bytes_48'(others => 0)
+       and S.Exporter_Secret = Bytes_48'(others => 0)
+       and S.State = S.State'Old
+       and S.Last_Error = S.Last_Error'Old
+       and S.Input.Read_Pos = S.Input.Read_Pos'Old
+       and S.Input.Write_Pos = S.Input.Write_Pos'Old
+       and S.Output.Read_Pos = S.Output.Read_Pos'Old
+       and S.Output.Write_Pos = S.Output.Write_Pos'Old
+       and S.Flight_Start = S.Flight_Start'Old
+       and S.In_Flight = S.In_Flight'Old
+       and S.Slot = S.Slot'Old
+       and S.Version = S.Version'Old
+       and S.Negotiated_Suite = S.Negotiated_Suite'Old;
+
+   procedure Zero_Keys (S : in out Session) is
    begin
       SPARKTLSCrypto.AES_GCM.Clear (S.Write_GCM);
       --  Traffic keys (both directions), counters included
@@ -568,18 +592,34 @@ is
       --  TLS 1.2 implicit IVs
       S.Client_IV_12 := (others => 0);
       S.Server_IV_12 := (others => 0);
-   end Sanitize_Keys;
+   end Zero_Keys;
 
-   procedure Scrub_Ticket_Secrets (S : in out Session) is
+   procedure Zero_Ticket_Secrets (S : in out Session)
+   with
+     Post =>
+       S.Ticket.Valid = False
+       and S.State = S.State'Old
+       and S.Last_Error = S.Last_Error'Old
+       and S.Input.Read_Pos = S.Input.Read_Pos'Old
+       and S.Input.Write_Pos = S.Input.Write_Pos'Old
+       and S.Output.Read_Pos = S.Output.Read_Pos'Old
+       and S.Output.Write_Pos = S.Output.Write_Pos'Old
+       and S.Flight_Start = S.Flight_Start'Old
+       and S.In_Flight = S.In_Flight'Old
+       and S.Slot = S.Slot'Old
+       and S.Version = S.Version'Old
+       and S.Negotiated_Suite = S.Negotiated_Suite'Old;
+
+   procedure Zero_Ticket_Secrets (S : in out Session) is
    begin
       S.Ticket.PSK := (others => 0);
       S.Ticket.Ticket := (others => 0);
       S.Ticket.Valid := False;
       S.TLS12_New_Ticket.Master_Secret := (others => 0);
       S.TLS12_New_Ticket.Valid := False;
-   end Scrub_Ticket_Secrets;
+   end Zero_Ticket_Secrets;
 
-   procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
+   procedure Zero_Handshake_Context (HC : in out Handshake_Context) is
    begin
       --  Key exchange: private scalars and the shared secret
       HC.KE.Shared := (others => 0);
@@ -625,7 +665,31 @@ is
       SPARKTLS_Transcript.Wipe (HC.TS);
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
+   end Zero_Handshake_Context;
+
+   procedure Sanitize_Keys (S : in out Session) is
+   begin
+      Zero_Keys (S);
+   end Sanitize_Keys;
+
+   procedure Scrub_Ticket_Secrets (S : in out Session) is
+   begin
+      Zero_Ticket_Secrets (S);
+   end Scrub_Ticket_Secrets;
+
+   procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
+   begin
+      Zero_Handshake_Context (HC);
    end Scrub_Handshake_Context;
+
+   procedure Enter_Error_State (S : in out Session; Err : Error_Code) is
+   begin
+      Zero_Keys (S);
+      Zero_Ticket_Secrets (S);
+      Zero_Handshake_Context (S.HC);
+      S.Last_Error := Err;
+      S.State := Error_State;
+   end Enter_Error_State;
 
    ----------------------------------------------------------------------------
    --  RFC 8446 4.2 extension policy table
