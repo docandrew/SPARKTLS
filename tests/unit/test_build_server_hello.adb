@@ -60,6 +60,8 @@ procedure Test_Build_Server_Hello is
       Det_Random_Lib.Reset;
       HC.Client_Has_X25519 := True;
       HC.KE.Peer_PK := (others => 16#01#);  --  arbitrary peer pubkey
+      --  The x25519 happy path is a Non_FIPS algorithm.
+      HC.Cfg.Algorithms := Non_FIPS;
    end Init_Context;
 
    --  Generate a valid P-256 peer pubkey by running Mulgen on a fixed

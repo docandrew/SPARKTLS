@@ -253,11 +253,16 @@ for cert_name in rsa rsa2056 ed25519 p256 p384; do
 
     for suite in TLS_AES_128_GCM_SHA256 TLS_CHACHA20_POLY1305_SHA256 TLS_AES_256_GCM_SHA384; do
         for group in x25519 P-256 P-384 X25519MLKEM768; do
+            # ChaCha20 and standalone X25519 are Non_FIPS algorithms.
+            mode=""
+            if [ "$suite" = TLS_CHACHA20_POLY1305_SHA256 ] || [ "$group" = x25519 ]; then
+                mode="--non-fips"
+            fi
             cleanup
-            "$SERVER" "$cert" "$key" 2>/dev/null &
+            "$SERVER" "$cert" "$key" $mode 2>/dev/null &
             sleep 1
 
-            label="${cert_name}+${suite}+${group}"
+            label="${cert_name}+${suite}+${group}${mode:+ (non-fips)}"
             output=$(echo "hello" | timeout 5 openssl s_client \
                 -connect 127.0.0.1:$PORT -tls1_3 \
                 -ciphersuites "$suite" -groups "$group" \
@@ -293,14 +298,16 @@ for cert_name in rsa rsa2056 ed25519 p256 p384; do
     [ -f "$cert" ] || continue
 
     for suite in TLS_AES_128_GCM_SHA256 TLS_CHACHA20_POLY1305_SHA256 TLS_AES_256_GCM_SHA384; do
+        mode=""
+        [ "$suite" = TLS_CHACHA20_POLY1305_SHA256 ] && mode="--non-fips"
         cleanup
         openssl s_server -cert "$cert" -key "$key" \
             -accept $PORT -tls1_3 -ciphersuites "$suite" \
             -www 2>/dev/null &
         sleep 1
 
-        label="${cert_name}+${suite}"
-        output=$(timeout 10 "$FETCH" --cafile "$cert" --rfc5280 "https://localhost:$PORT/" 2>&1 || true)
+        label="${cert_name}+${suite}${mode:+ (non-fips)}"
+        output=$(timeout 10 "$FETCH" $mode --cafile "$cert" --rfc5280 "https://localhost:$PORT/" 2>&1 || true)
         cleanup
 
         if echo "$output" | grep -qi "HTTP/1\|200\|html"; then
@@ -381,8 +388,10 @@ echo "--- TLS 1.2: OpenSSL client → SPARKTLS server ---"
 # 512-byte signature, which the old 512-byte SKE buffer could not hold)
 for rsa_name in rsa rsa4096; do
 for suite in ECDHE-RSA-AES128-GCM-SHA256 ECDHE-RSA-AES256-GCM-SHA384 ECDHE-RSA-CHACHA20-POLY1305; do
+    mode=""
+    case "$suite" in *CHACHA20*) mode="--non-fips" ;; esac
     cleanup
-    "$SERVER" "$CERT_DIR/$rsa_name.crt" "$CERT_DIR/$rsa_name.key" 2>/dev/null &
+    "$SERVER" "$CERT_DIR/$rsa_name.crt" "$CERT_DIR/$rsa_name.key" $mode 2>/dev/null &
     sleep 1
 
     output=$(echo "hello" | timeout 5 openssl s_client \
@@ -391,9 +400,9 @@ for suite in ECDHE-RSA-AES128-GCM-SHA256 ECDHE-RSA-AES256-GCM-SHA384 ECDHE-RSA-C
     cleanup
 
     if echo "$output" | grep -qi "hello\|GET\|HTTP"; then
-        pass "Server TLS1.2 $rsa_name+$suite"
+        pass "Server TLS1.2 $rsa_name+$suite${mode:+ (non-fips)}"
     else
-        fail "Server TLS1.2 $rsa_name+$suite"
+        fail "Server TLS1.2 $rsa_name+$suite${mode:+ (non-fips)}"
     fi
 done
 done
@@ -405,8 +414,10 @@ for cert_name in p256 p384; do
     [ -f "$cert" ] || continue
 
     for suite in ECDHE-ECDSA-AES128-GCM-SHA256 ECDHE-ECDSA-AES256-GCM-SHA384 ECDHE-ECDSA-CHACHA20-POLY1305; do
+        mode=""
+        case "$suite" in *CHACHA20*) mode="--non-fips" ;; esac
         cleanup
-        "$SERVER" "$cert" "$key" 2>/dev/null &
+        "$SERVER" "$cert" "$key" $mode 2>/dev/null &
         sleep 1
 
         output=$(echo "hello" | timeout 5 openssl s_client \
@@ -415,9 +426,9 @@ for cert_name in p256 p384; do
         cleanup
 
         if echo "$output" | grep -qi "hello\|GET\|HTTP"; then
-            pass "Server TLS1.2 ${cert_name}+${suite}"
+            pass "Server TLS1.2 ${cert_name}+${suite}${mode:+ (non-fips)}"
         else
-            fail "Server TLS1.2 ${cert_name}+${suite}"
+            fail "Server TLS1.2 ${cert_name}+${suite}${mode:+ (non-fips)}"
         fi
     done
 done
@@ -746,7 +757,9 @@ else
                 > /tmp/mtls_srv.log 2>&1 &
             sleep 0.5
 
-            output=$(timeout 5 "$CLIENT" \
+            mode=""
+            [ "$suite" = TLS_CHACHA20_POLY1305_SHA256 ] && mode="--non-fips"
+            output=$(timeout 5 "$CLIENT" $mode \
                 --port $PORT --host localhost \
                 --cert-file "$CERT_DIR/${cred}.crt" \
                 --key-file "$CERT_DIR/${cred}.key" \
@@ -756,9 +769,9 @@ else
             cleanup
 
             if [ $rc -eq 0 ]; then
-                pass "client mTLS $cred + $suite"
+                pass "client mTLS $cred + $suite${mode:+ (non-fips)}"
             else
-                fail "client mTLS $cred + $suite"
+                fail "client mTLS $cred + $suite${mode:+ (non-fips)}"
                 echo "    $(echo "$output" | head -2)"
             fi
         done
@@ -1269,8 +1282,8 @@ fi
 # ===================================================================
 # HelloRetryRequest — RFC 8446 §4.1.4. SPARKTLS server, openssl
 # client offers key_share for an unsupported group (secp521r1) but
-# lists X25519 in supported_groups. Server MUST respond with HRR
-# requesting X25519, then complete the handshake on CH2.
+# lists P-256 in supported_groups. Server MUST respond with HRR
+# requesting P-256, then complete the handshake on CH2.
 # ===================================================================
 echo ""
 echo "--- HRR: SPARKTLS server → OpenSSL s_client ---"
@@ -1282,8 +1295,8 @@ else
         > /tmp/hrr_srv.log 2>&1 &
     sleep 0.5
 
-    # -groups secp521r1:X25519 sends supported_groups=secp521r1,X25519
-    # and key_share=secp521r1 only → server must HRR for X25519.
+    # -groups secp521r1:P-256 sends supported_groups=secp521r1,P-256
+    # and key_share=secp521r1 only → server must HRR for P-256.
     # openssl 3.x's -msg displays HRR as a plain ServerHello (the SH
     # with HRR sentinel random is the wire encoding), so we detect
     # HRR by: TWO ClientHello records on the wire (CH1 then CH2 after
@@ -1293,7 +1306,7 @@ else
     output=$(echo "x" | timeout 5 openssl s_client \
         -connect localhost:$PORT -tls1_3 \
         -CAfile "$CERT_DIR/ed25519.crt" \
-        -groups secp521r1:X25519 -msg 2>&1)
+        -groups secp521r1:P-256 -msg 2>&1)
     cleanup
     ch_count=$(echo "$output" | grep -c "ClientHello" || true)
     if [ "$ch_count" -ge 2 ] \
@@ -1305,6 +1318,162 @@ else
         echo "$output" | grep -E "Hello|alert|Verify|error" \
                        | sed 's/^/    /' | head -10
     fi
+fi
+
+# ===================================================================
+# FIPS mode (the default, SPARKTLS.FIPS_Mode): refuse what FIPS 140-3 does
+# not approve -- ChaCha20-Poly1305, standalone X25519 (IG C.K) and TLS 1.2
+# without the Extended Master Secret (IG D.Q). The matrices above cover the
+# approved combinations and, with --non-fips, the rest.
+# ===================================================================
+echo ""
+echo "--- FIPS mode refuses non-approved peers ---"
+if [ ! -x "$SERVER" ] || [ ! -x "$FETCH" ]; then
+    echo "  (skipped — tls_blocking_server or tls_fetch not built)"
+else
+    #  Each refusal has a control: the same peer against --non-fips must
+    #  complete, so a refusal cannot pass because the setup is broken.
+    fips_server_refuses() {
+        local label="$1"; shift
+        local mode
+        for mode in "" --non-fips; do
+            cleanup
+            "$SERVER" "$CERT_DIR/p256.crt" "$CERT_DIR/p256.key" $mode > /dev/null 2>&1 &
+            sleep 0.5
+            output=$(echo "hello" | timeout 5 openssl s_client \
+                -connect 127.0.0.1:$PORT -CAfile "$CERT_DIR/p256.crt" "$@" 2>&1 || true)
+            cleanup
+            #  s_client prints "Verify return code: 0 (ok)" even after a
+            #  failed handshake; a named cipher is the success signal.
+            if [ -n "$mode" ]; then
+                if echo "$output" | grep -Eq "Cipher is [A-Z]"; then
+                    pass "Non-FIPS server accepts $label"
+                else
+                    fail "Non-FIPS server accepts $label"
+                fi
+            elif echo "$output" | grep -Eq "Cipher is [A-Z]"; then
+                fail "FIPS server refuses $label"
+            elif echo "$output" | grep -qi "alert\|error"; then
+                pass "FIPS server refuses $label"
+            else
+                fail "FIPS server refuses $label"
+                echo "$output" | head -3 | sed 's/^/    /'
+            fi
+        done
+    }
+    fips_server_refuses "a ChaCha20-only TLS 1.3 client" -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256
+    fips_server_refuses "an X25519-only TLS 1.3 client" -tls1_3 -groups x25519
+    fips_server_refuses "a TLS 1.2 client without EMS" -tls1_2 -no_ems
+
+    fips_client_refuses() {
+        local label="$1"; shift
+        local mode
+        for mode in "" --non-fips; do
+            cleanup
+            openssl s_server -cert "$CERT_DIR/p256.crt" -key "$CERT_DIR/p256.key" \
+                -accept $PORT -www "$@" > /dev/null 2>&1 &
+            sleep 0.5
+            output=$(timeout 10 "$FETCH" $mode --cafile "$CERT_DIR/p256.crt" --rfc5280 \
+                "https://localhost:$PORT/" 2>&1 || true)
+            cleanup
+            if [ -n "$mode" ]; then
+                if echo "$output" | grep -qi "HTTP/1\|200\|html"; then
+                    pass "Non-FIPS client accepts $label"
+                else
+                    fail "Non-FIPS client accepts $label"
+                fi
+            elif echo "$output" | grep -qi "HTTP/1\|200\|html"; then
+                fail "FIPS client refuses $label"
+            else
+                pass "FIPS client refuses $label"
+            fi
+        done
+    }
+    fips_client_refuses "a ChaCha20-only TLS 1.3 server" -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256
+    fips_client_refuses "an X25519-only server" -groups x25519
+    fips_client_refuses "a TLS 1.2 server without EMS" -tls1_2 -no_ems
+fi
+
+# ===================================================================
+# FIPS 140-3 software integrity test (SPARKTLS.Integrity, tools/fips_inject).
+# A freshly linked binary must fail the check, pass once fips_inject has
+# written the MACs, and fail again after one byte of module code changes.
+# ===================================================================
+echo ""
+echo "--- FIPS integrity test ---"
+INTEG="$REPO_ROOT/bin/examples/fips_integrity_check"
+INJECT="$REPO_ROOT/bin/tools/fips_inject"
+if [ ! -x "$INTEG" ] || [ ! -x "$INJECT" ]; then
+    echo "  (skipped — fips_integrity_check or fips_inject not built)"
+else
+    work=$(mktemp -d)
+    cp "$INTEG" "$work/check"
+    #  The examples' post-build action has already injected it: put the
+    #  placeholder back to get a binary fips_inject has not processed.
+    python3 - "$work/check" <<'PY'
+import re, subprocess, sys
+path = sys.argv[1]
+out = subprocess.run(["readelf", "-SW", path], capture_output=True, text=True).stdout
+m = re.search(r"\.fips_hmac\s+PROGBITS\s+[0-9a-f]+\s+([0-9a-f]+)\s+([0-9a-f]+)", out)
+off = int(m.group(1), 16)
+b = bytearray(open(path, "rb").read()); b[off:off + 64] = b"\xa5" * 64
+open(path, "wb").write(b)
+PY
+    if "$work/check" > /dev/null; then
+        fail "Integrity check refuses a binary fips_inject has not processed"
+    else
+        pass "Integrity check refuses a binary fips_inject has not processed"
+    fi
+    #  RBG.Init runs the integrity test in FIPS mode only.
+    if "$work/check" --rbg > /dev/null; then
+        fail "RBG.Init (FIPS) refuses a binary fips_inject has not processed"
+    else
+        pass "RBG.Init (FIPS) refuses a binary fips_inject has not processed"
+    fi
+    if "$work/check" --rbg --non-fips > /dev/null; then
+        pass "RBG.Init (Non_FIPS) starts without fips_inject"
+    else
+        fail "RBG.Init (Non_FIPS) starts without fips_inject"
+    fi
+    if "$work/check" --sequence > /dev/null; then
+        pass "Later FIPS Init runs the integrity test; its failure stays latched"
+    else
+        fail "Later FIPS Init runs the integrity test; its failure stays latched"
+    fi
+    #  A module started in FIPS mode refuses Non_FIPS sessions.
+    if "$INTEG" --mismatch > /dev/null; then
+        pass "FIPS module refuses a Non_FIPS session, accepts a FIPS one"
+    else
+        fail "FIPS module refuses a Non_FIPS session, accepts a FIPS one"
+    fi
+    if "$INJECT" "$work/check" > /dev/null && "$work/check" > /dev/null; then
+        pass "Integrity check passes after fips_inject"
+    else
+        fail "Integrity check passes after fips_inject"
+    fi
+    cp "$work/check" "$work/stripped"
+    strip "$work/stripped"
+    if "$work/stripped" > /dev/null; then
+        pass "Integrity check passes after strip"
+    else
+        fail "Integrity check passes after strip"
+    fi
+    cp "$work/check" "$work/tampered"
+    python3 - "$work/tampered" <<'PY'
+import re, subprocess, sys
+path = sys.argv[1]
+out = subprocess.run(["readelf", "-SW", path], capture_output=True, text=True).stdout
+m = re.search(r"\.fips_text\s+PROGBITS\s+[0-9a-f]+\s+([0-9a-f]+)\s+([0-9a-f]+)", out)
+off = int(m.group(1), 16) + int(m.group(2), 16) // 2
+b = bytearray(open(path, "rb").read()); b[off] ^= 1
+open(path, "wb").write(b)
+PY
+    if "$work/tampered" > /dev/null; then
+        fail "Integrity check refuses one flipped byte of module code"
+    else
+        pass "Integrity check refuses one flipped byte of module code"
+    fi
+    rm -rf "$work"
 fi
 
 # ===================================================================

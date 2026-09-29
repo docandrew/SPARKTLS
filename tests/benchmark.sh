@@ -35,6 +35,8 @@ if [ "${BENCH_NO_REBUILD:-0}" != "1" ]; then
     ( cd "$REPO/examples" && alr exec -- gprbuild -P sparktls_examples.gpr -j0 ) \
         >> /tmp/bench_build.log 2>&1 || {
         echo "Examples rebuild FAILED; see /tmp/bench_build.log" >&2; exit 1; }
+    #  FIPS integrity test: RBG.Init refuses to start without the MACs.
+    "$REPO/tools/fips_inject/inject_all.sh" "$REPO/bin/examples" >> /tmp/bench_build.log 2>&1
     ( cd "$REPO" && alr exec -- gprbuild -P tests/x509/x509_validate.gpr -j0 ) \
         >> /tmp/bench_build.log 2>&1 || true
 fi

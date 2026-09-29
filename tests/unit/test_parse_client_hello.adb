@@ -228,6 +228,9 @@ procedure Test_Parse_Client_Hello is
       HC := (others => <>);
       Det_Random_Lib.Reset;
       HC.Cfg.Local := Test_Identity'Unchecked_Access;
+      --  These tests cover parsing across every algorithm; the FIPS-mode
+      --  filtering has its own tests below.
+      HC.Cfg.Algorithms := Non_FIPS;
    end Init_Context;
 
    ----------------------------------------------------------------------------
@@ -388,6 +391,32 @@ procedure Test_Parse_Client_Hello is
              OK and then
              Neg = Suite_CHACHA20_POLY1305_SHA256);
    end Test_Suite_Prefers_ChaCha;
+
+   procedure Test_FIPS_Ignores_ChaCha is
+      --  Same offer in FIPS mode: ChaCha20 is not negotiable, AES-128 wins.
+      S    : Server_Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Version : TLS_Version;
+      Err    : Error_Code := No_Error;
+      HC   : Handshake_Context;
+      Suites : constant Byte_Seq (0 .. 3) :=
+        (16#13#, 16#01#,   --  AES_128
+         16#13#, 16#03#);  --  CHACHA20
+      Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Suites => Suites);
+      OK : Boolean;
+   begin
+      Init_Context (S, HC);
+      HC.Cfg.Algorithms := FIPS;
+      declare
+         Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+      begin
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello
+           (Neg, Neg_12, Err, HC, Data, Version, OK);
+      end;
+      Check ("FIPS: ChaCha20 ignored, AES-128 negotiated",
+             OK and then Neg = Suite_AES_128_GCM_SHA256);
+   end Test_FIPS_Ignores_ChaCha;
 
    procedure Test_Suite_TLS12 is
       --  Offer only TLS 1.2 ECDHE-RSA-AES128
@@ -725,6 +754,34 @@ procedure Test_Parse_Client_Hello is
              HC.Client_Supports_P384);
    end Test_Supported_Groups;
 
+   procedure Test_FIPS_Supported_Groups is
+      --  FIPS mode: standalone X25519 is not recorded as supported.
+      S    : Server_Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Version : TLS_Version;
+      Err    : Error_Code := No_Error;
+      HC   : Handshake_Context;
+      Groups : constant Byte_Seq (0 .. 5) :=
+        (16#00#, 16#1D#, 16#00#, 16#17#, 16#00#, 16#18#);
+      OK : Boolean;
+   begin
+      Init_Context (S, HC);
+      HC.Cfg.Algorithms := FIPS;
+      declare
+         Body_Bs : constant Byte_Seq := Build_Min_CH_Body
+           (Exts => Build_Supported_Groups_Ext (Groups));
+         Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+      begin
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello
+           (Neg, Neg_12, Err, HC, Data, Version, OK);
+      end;
+      Check ("FIPS: x25519 in supported_groups not recorded",
+             OK and then not HC.Client_Supports_X25519);
+      Check ("FIPS: P-256 and P-384 still recorded",
+             HC.Client_Supports_P256 and then HC.Client_Supports_P384);
+   end Test_FIPS_Supported_Groups;
+
    procedure Test_Supported_Versions is
       S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
@@ -847,6 +904,7 @@ begin
    Test_Session_ID_Extracted;
    Test_Suite_TLS13_AES256;
    Test_Suite_Prefers_ChaCha;
+   Test_FIPS_Ignores_ChaCha;
    Test_Suite_TLS12;
    Test_TLS12_Compression_List_With_Null;
    Test_TLS13_Compression_List_With_Extra_Rejected;
@@ -858,6 +916,7 @@ begin
    Test_SV_Has_TLS_1_2;
    Test_Sig_Algs;
    Test_Supported_Groups;
+   Test_FIPS_Supported_Groups;
    Test_Supported_Versions;
    Test_ALPN;
    Test_Multiple_Extensions;

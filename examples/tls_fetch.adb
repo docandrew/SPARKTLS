@@ -250,12 +250,11 @@ procedure TLS_Fetch is
    Headers_Only : Boolean := False;
    Insecure     : Boolean := False;
    Use_RFC5280  : Boolean := False;
+   Algorithms   : SPARKTLS.FIPS_Mode := SPARKTLS.FIPS;
    URL_Arg      : Natural := 0;
    CAFile_Arg   : Natural := 0;
 
 begin
-   Entropy_Random.Init;
-
    --  Parse arguments
    for I in 1 .. Ada.Command_Line.Argument_Count loop
       declare
@@ -273,6 +272,8 @@ begin
             null;  --  consumed by --cafile
          elsif Arg = "--rfc5280" then
             Use_RFC5280 := True;
+         elsif Arg = "--non-fips" then
+            Algorithms := SPARKTLS.Non_FIPS;
          elsif Arg = "--revocation=off" then
             Rev_Policy := SPARKTLS.Ignore;
          elsif Arg = "--revocation=soft" then
@@ -292,12 +293,16 @@ begin
       end;
    end loop;
 
+   --  After parsing: --non-fips starts the module in Non_FIPS mode.
+   Entropy_Random.Init (Mode => Algorithms);
+
    if URL_Arg = 0 then
       Put_Line ("Usage: tls_fetch [-v] [-I] [-k] [--cafile <pem>] <https://...>");
       Put_Line ("  -v, --verbose   Show handshake details");
       Put_Line ("  -I, --head      Show response headers only");
       Put_Line ("  -k, --insecure  Skip certificate verification");
       Put_Line ("  --cafile <pem>  Use specific CA certificate file");
+      Put_Line ("  --non-fips      Also negotiate ChaCha20 and X25519");
       Put_Line ("  --revocation=off|soft|hard  Revocation policy (default soft)");
       Put_Line ("  --crl <der>     Attach a DER CRL for revocation checking (repeatable)");
       return;
@@ -420,6 +425,7 @@ begin
                           then SPARKTLS.Mode_RFC5280
                           else SPARKTLS.Mode_WebPKI),
           Skip_Verify => Insecure,
+          Algorithms  => Algorithms,
           others      => <>), Client_Pool.Handshakes);
 
       Handshake : loop

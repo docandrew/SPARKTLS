@@ -1,0 +1,16 @@
+--  ACVP module wrapper (see acvp_wrapper.adb). A test program: built with
+--  runtime checks and assertions on, so a contract violated by a vector
+--  shows up as an error, not a wrong answer.
+with "../../sparktls.gpr";
+
+project ACVP_Wrapper is
+   for Source_Dirs use (".");
+   for Object_Dir use "obj";
+   for Exec_Dir use "../../bin/tests";
+   for Create_Missing_Dirs use "True";
+   for Main use ("acvp_wrapper.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnata", "-gnato");
+   end Compiler;
+end ACVP_Wrapper;

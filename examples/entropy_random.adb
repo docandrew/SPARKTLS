@@ -1,3 +1,4 @@
+with SPARKTLS.Initialize;
 with Ada.Text_IO;
 with SPARKTLS.RBG;
 
@@ -17,14 +18,14 @@ package body Entropy_Random is
          & "); generator latched off, handshakes will fail with Entropy_Failure");
    end On_Failure;
 
-   procedure Init (Verbose : Boolean := False) is
+   procedure Init (Verbose : Boolean := False; Mode : SPARKTLS.FIPS_Mode := SPARKTLS.FIPS) is
       OK : Boolean;
    begin
-      SPARKTLS.RBG.Init (OK, On_Failure => On_Failure'Access);
+      SPARKTLS.Initialize (OK, Mode => Mode, On_Failure => On_Failure'Access);
       if not OK then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
-            "Entropy: SPARKTLS.RBG start-up failed (jitter source start-up test, DRBG self-test or first seed)");
+            "Entropy: SPARKTLS.RBG start-up failed (FIPS self-tests or integrity test, jitter source start-up test, or first seed)");
       elsif Verbose then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,

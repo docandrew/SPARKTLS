@@ -66,6 +66,7 @@ procedure MTLS_Test_Client is
    Cfg_Expect_ALPN : String (1 .. 255) := (others => Character'Val (0));
    Cfg_Expect_ALPN_Len : Natural := 0;
    Cfg_Skip_Verify          : Boolean := False;
+   Cfg_Algorithms           : SPARKTLS.FIPS_Mode := SPARKTLS.FIPS;
    Cfg_External : Boolean := False;   --  --external-sign
    Cfg_Skip_Hostname_Verify : Boolean := False;
 
@@ -148,6 +149,8 @@ procedure MTLS_Test_Client is
                Cfg_Expect_Fail := True;
             elsif A = "--skip-verify" then
                Cfg_Skip_Verify := True;
+            elsif A = "--non-fips" then
+               Cfg_Algorithms := SPARKTLS.Non_FIPS;
             elsif A = "--skip-hostname-verify" then
                Cfg_Skip_Hostname_Verify := True;
             elsif A = "--alpn" then
@@ -269,8 +272,8 @@ procedure MTLS_Test_Client is
    end Recv_Once;
 
 begin
-   Entropy_Random.Init;
    Parse_Args;
+   Entropy_Random.Init (Mode => Cfg_Algorithms);
 
    if Cfg_Port = 0 then
       Err ("--port required");
@@ -356,6 +359,7 @@ begin
        ALPN                 => SPARKTLS.To_Name (Cfg_ALPN (1 .. Cfg_ALPN_Len)),
        Skip_Verify          => Cfg_Skip_Verify,
        Skip_Hostname_Verify => Cfg_Skip_Hostname_Verify,
+       Algorithms           => Cfg_Algorithms,
        others               => <>), Client_Pool.Handshakes);
 
    --  Drive handshake to completion, then exchange app data, then close.

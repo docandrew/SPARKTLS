@@ -1,6 +1,6 @@
 with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
-with SPARKEntropy;
+with CLI_Random;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 with SPARKTLS.PEM;
@@ -12,35 +12,20 @@ package body Key_Util is
    use type X509.Byte;
    use type X509.Byte_Seq;
 
-   --  Entropy state for key generation
-   Entropy : SPARKEntropy.Entropy_State;
+   --  Randomness for key generation and ECDSA blinding: the module's
+   --  generator (see CLI_Random).
    Entropy_Ready : Boolean := False;
 
    procedure Ensure_Entropy is
-      OK : Boolean;
    begin
-      if not Entropy_Ready then
-         SPARKEntropy.Init (Entropy, OK);
-         if not OK then
-            Ada.Text_IO.Put_Line ("Error: entropy source init failed");
-            return;
-         end if;
-         Entropy_Ready := True;
-      end if;
+      CLI_Random.Start (Entropy_Ready);
    end Ensure_Entropy;
 
+   --  All zero on failure, as before; callers treat a zero draw as failure.
    procedure Get_Random_Bytes (Output : out X509.Byte_Seq) is
-      Buf : SPARKEntropy.Byte_Seq (0 .. Output'Length - 1);
-      OK  : Boolean;
+      OK : Boolean;
    begin
-      SPARKEntropy.Generate (Entropy, Buf, OK);
-      if not OK then
-         Output := (others => 0);
-         return;
-      end if;
-      for I in Output'Range loop
-         Output (I) := X509.Byte (Buf (Natural (I - Output'First)));
-      end loop;
+      CLI_Random.Get (Output, OK);
    end Get_Random_Bytes;
 
    --  Encode Ed25519 private key as PKCS#8 DER.

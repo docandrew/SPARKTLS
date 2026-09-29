@@ -21,6 +21,7 @@ the end and is reported as failed.
 | `bogo` | BoringSSL's BoGo runner against `tests/bogo/bogo_shim` | 2 min (10 min first-time setup) | Go (fetched if missing), git | `tests/bogo/EXPECTED_FAILURES.txt`; out-of-scope globs in `run.sh` |
 | `fuzz` (opt-in) | replays the fuzz seed corpora through the checked parsers | 1 min | build of `tests/fuzz` | none |
 | `tlsanvil` (opt-in) | TLS-Anvil via docker against `tls_blocking_server` | 30 min | docker | `tests/tlsanvil/EXPECTED_FAILURES.txt` |
+| `acvp` (opt-in; CI job `acvp`) | NIST's ACVP sample vector sets and the sets BoringSSL ships with `acvptool`, run through `acvptool` against `tests/acvp/acvp_wrapper` (the module's own primitives); each answer compared with the expected result. Deterministic tests only; filters in `tests/acvp/acvp.py` cut each set to what the module implements | 10 s | Go, git, curl, python3 | none: all must pass |
 
 Default lanes: `unit cli integration protocol x509 bogo`, followed by a second
 pass with runtime checks and contracts on (`--checked`, see the header of
@@ -48,6 +49,7 @@ fetched at a **commit pin**, never a branch head:
 | What | Pin | Bump procedure |
 |---|---|---|
 | sparkx509, sparktlscrypto, sparkentropy | `*_REF` in `ci/fetch-deps.sh` | After the sibling commit is **pushed**, set the SHA (check with `git ls-remote <url> refs/heads/<branch>`), run the affected lanes locally against that checkout, commit the bump with the sparktls change that needs it. |
+| NIST ACVP sample sets | `ACVP_SERVER_REF` in `tests/acvp/run.sh` (BoringSSL for `acvptool` is the BoGo pin) | Set the SHA, run `tests/run_all.sh acvp`, fix or filter anything new; commit the pin with any filter change. |
 | x509-limbo corpus | `LIMBO_REF` in `tests/x509/generate.sh` | Delete `tests/x509/x509-limbo` and `tests/x509/generated`, run `tests/x509/run.sh`, triage every new failure into `EXPECTED_FAILURES.txt` (annotated, corpus SHA in the header) or fix it, update the README numbers, commit pin and baseline together. |
 
 Unpinned, CI silently tests code and corpora the local box never ran: on

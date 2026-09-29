@@ -500,7 +500,7 @@ is
             KS_Raw_Len := 0;
             return;
          end if;
-      elsif HC.Client_Has_X25519 then
+      elsif HC.Client_Has_X25519 and then Group_Allowed (HC.Cfg.Algorithms, Group_X25519) then
          HC.KE.Curve := Group_X25519;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));

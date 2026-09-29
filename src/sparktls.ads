@@ -349,6 +349,22 @@ is
       TLS_1_3_Only,   --  Only accept TLS 1.3; reject 1.2 clients
       TLS_1_2_Only);  --  Only accept TLS 1.2; do not offer 1.3
 
+   --  Algorithm policy. FIPS (the default) negotiates only what FIPS 140-3
+   --  approves: no ChaCha20-Poly1305 suites, no standalone X25519 (the
+   --  X25519MLKEM768 hybrid stays, IG D.S), and TLS 1.2 only with the
+   --  Extended Master Secret (IG D.Q). Non_FIPS adds those back. Self-tests
+   --  and the integrity check are the same in both modes.
+   type FIPS_Mode is (FIPS, Non_FIPS);
+
+   function Suite_Allowed (Mode : FIPS_Mode; Suite : Supported_Suite) return Boolean
+   is (Mode = Non_FIPS
+       or else Suite not in Suite_CHACHA20_POLY1305_SHA256
+                          | Suite_ECDHE_RSA_CHACHA20_SHA256
+                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+
+   function Group_Allowed (Mode : FIPS_Mode; Group : Maybe_ECDHE_Group) return Boolean
+   is (Mode = Non_FIPS or else Group /= Group_X25519);
+
    type Connection_State is
      (Idle,
 
@@ -1019,7 +1035,7 @@ is
    --
    --  Every random byte the library uses comes from SPARKTLS.RBG, the
    --  process-wide SP 800-90A HMAC_DRBG the application starts once with
-   --  RBG.Init and its entropy source (SPARKEntropy in the examples).
+   --  SPARKTLS.Initialize and its entropy source (SPARKEntropy in the examples).
    --  There is no per-configuration generator to supply or forget.
    --
    --  The one thing the library checks itself is that a draw is not all
@@ -1762,6 +1778,8 @@ is
       --  caps) or extra-paranoid servers (lower them).
       DoS_Caps : SPARKTLS.DoS_Caps := Default_DoS_Caps;
       Versions : Version_Policy := Allow_Both;  --  TLS version control
+      --  Which algorithms may be negotiated; see FIPS_Mode.
+      Algorithms : FIPS_Mode := FIPS;
 
       --  Client: preferred initial TLS 1.3 key_share group. Group_None keeps
       --  the default browser-like behavior: advertise X25519MLKEM768 (when

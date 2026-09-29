@@ -6,7 +6,7 @@ with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.P384.ECDSA;
 with SPARKTLSCrypto.Ed25519;
 with SPARKTLSCrypto.RFC6979;
-with SPARKEntropy;
+with CLI_Random;
 
 package body CSR_Builder is
    use type X509.Byte;
@@ -14,27 +14,12 @@ package body CSR_Builder is
    use type SPARKNaCl.N32;
    use DER_Builder;
 
-   --  Entropy for ECDSA nonce
-   Entropy : SPARKEntropy.Entropy_State;
-   Entropy_Ready : Boolean := False;
-
-   procedure Ensure_Entropy is
+   --  Randomness for ECDSA blinding: the module's generator (see
+   --  CLI_Random), started on first use. All zero on failure.
+   procedure Get_Random (Output : out X509.Byte_Seq) is
       OK : Boolean;
    begin
-      if not Entropy_Ready then
-         SPARKEntropy.Init (Entropy, OK);
-         Entropy_Ready := OK;
-      end if;
-   end Ensure_Entropy;
-
-   procedure Get_Random (Output : out X509.Byte_Seq) is
-      Buf : SPARKEntropy.Byte_Seq (0 .. Output'Length - 1);
-      OK  : Boolean;
-   begin
-      SPARKEntropy.Generate (Entropy, Buf, OK);
-      for I in Output'Range loop
-         Output (I) := X509.Byte (Buf (Natural (I - Output'First)));
-      end loop;
+      CLI_Random.Get (Output, OK);
    end Get_Random;
 
    --  Write a DN

@@ -60,16 +60,28 @@ is
 
    Default_Reseed_Requests : constant := 4096;   --  serving-DRBG requests between reseeds
 
+   --  SPARKTLS.Initialize is the library's start-up call; Init is its
+   --  implementation.
+   --
    --  Start the entropy source and both DRBGs (see above). OK = False if a
    --  start-up test failed or the platform timer has no usable jitter;
    --  Status is then Error. A no-op returning OK = True while Ready. OSR is
    --  the jitter source's oversampling rate for this platform (see
    --  SPARKEntropy.Min_OSR). Reseed_Requests is the serving DRBG's interval.
+   --
+   --  The first Init in a process also runs the FIPS 140-3 algorithm
+   --  self-tests (SPARKTLS.Self_Tests), whatever Mode is. Mode = FIPS adds
+   --  the software integrity test (SPARKTLS.Integrity), which needs the
+   --  executable to have been through tools/fips_inject after linking;
+   --  Non_FIPS skips it, for applications that do not use the linker step.
+   --  A failed self-test or integrity test latches Error until the process
+   --  restarts.
    procedure Init
      (OK              : out Boolean;
       On_Failure      : Entropy_Failure_Fn := null;
       OSR             : SPARKEntropy.OSR_Range := SPARKEntropy.Min_OSR;
-      Reseed_Requests : Positive := Default_Reseed_Requests);
+      Reseed_Requests : Positive := Default_Reseed_Requests;
+      Mode            : FIPS_Mode := FIPS);
 
    --  Reseed the core from fresh entropy-source output, then the serving
    --  DRBG from the core. Takes as long as the jitter source (milliseconds),
@@ -83,9 +95,21 @@ is
    --  Fill Output from the generator. All zero unless Status = Ready.
    procedure Random (Output : out Byte_Seq);
 
+   --  A conditional self-test failed (a pairwise consistency test on a
+   --  generated key pair, FIPS 140-3 IG 10.3.A): latch the module's error
+   --  state. The generator stops serving, Init refuses until the process
+   --  restarts, and the failure callback, if any, is told once.
+   procedure Conditional_Test_Failed;
+
    --  Sanitize the generator and return to Uninstantiated, so the next
    --  Init starts everything afresh (orderly shutdown, tests).
    procedure Shutdown;
+
+   --  The FIPS_Mode the generator was started in (Non_FIPS until an Init
+   --  succeeds, and again after Shutdown). Client and server Configure
+   --  refuse sessions with Algorithms => Non_FIPS when it is FIPS: a module
+   --  started in FIPS mode offers approved algorithms only.
+   procedure Get_Mode (Mode : out FIPS_Mode);
 
    --  Volatile: they read the generator's protected state. In SPARK code
    --  bind the result to a constant before using it in an expression.
@@ -118,7 +142,8 @@ private
       On_Failure      : Entropy_Failure_Fn := null;
       OSR             : Natural := SPARKEntropy.Min_OSR;
       Reseed_Requests : Positive := Default_Reseed_Requests;
-      Core_Requests   : Natural := 0)
+      Core_Requests   : Natural := 0;
+      Mode            : FIPS_Mode := FIPS)
    with Pre => Source /= null;
 
 end SPARKTLS.RBG;

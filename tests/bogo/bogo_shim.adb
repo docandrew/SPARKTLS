@@ -153,6 +153,14 @@ procedure Bogo_Shim is
 
    Cfg : Config_T;
 
+   --  The shim's clock is frozen at start-up and moves only by the flags
+   --  that advance it (-resumption-delay), as BoringSSL's shim clock does.
+   --  Reading the wall clock let the client's ticket age cross a second
+   --  boundary between the two connections: TLS13-TestValidTicketAge-Client
+   --  expects exactly the configured delay and failed intermittently on
+   --  slow CI runners.
+   Start_Time : constant Ada.Calendar.Time := Ada.Calendar.Clock;
+
    --  BoGo credential blocks (runner.go appendCredentialFlags): each
    --  -new-x509-credential opens a block whose -cert-file / -key-file /
    --  -ocsp-response / -signing-prefs / -must-match-issuer follow, in
@@ -257,7 +265,7 @@ procedure Bogo_Shim is
 
    function Current_Time return X509.Date_Time is
       use Ada.Calendar;
-      Now : constant Time := Clock + Duration (Cfg.Time_Offset_Seconds);
+      Now : constant Time := Start_Time + Duration (Cfg.Time_Offset_Seconds);
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
@@ -1771,6 +1779,8 @@ procedure Bogo_Shim is
                  (if Tickets_Off then null
                   else SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access);
                Server_Cfg.Versions := Policy;
+               --  BoGo is a protocol-conformance suite: run every algorithm.
+               Server_Cfg.Algorithms := SPARKTLS.Non_FIPS;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;
                Server_Cfg.TLS12_Cipher_Count := Cfg.TLS12_Cipher_Count;
@@ -1844,6 +1854,8 @@ procedure Bogo_Shim is
                Client_Cfg.Get_Time := Current_Time'Unrestricted_Access;
                Client_Cfg.Verify_Mode := Mode_RFC5280;
                Client_Cfg.Versions := Policy;
+               --  BoGo is a protocol-conformance suite: run every algorithm.
+               Client_Cfg.Algorithms := SPARKTLS.Non_FIPS;
                Client_Cfg.Client_Key_Share_Group := Group_From_Wire (Cfg.Preferred_Group);
                Client_Cfg.Post_Quantum_First := Cfg.PQ_First;
                Client_Cfg.Resume_Ticket := Saved_Ticket;
@@ -2387,7 +2399,9 @@ procedure Bogo_Shim is
    end Run_Handshake;
 
 begin
-   Entropy_Random.Init;
+   --  The shim runs Non_FIPS sessions (every algorithm), so the module is
+   --  started in Non_FIPS mode.
+   Entropy_Random.Init (Mode => SPARKTLS.Non_FIPS);
    --  Install the fixed TLS 1.2 ticket key into the shared cache. The
    --  library no longer holds ticket keys, so the shim owns this now.
    SPARKTLS.Ticket_Keys.Rotate_TEK (BoGo_Key_ID, BoGo_TEK, 0);

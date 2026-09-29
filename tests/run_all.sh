@@ -17,6 +17,8 @@
 #       bogo         BoringSSL BoGo runner (tests/bogo; first run ~10 min setup)
 #       fuzz         opt-in: replay fuzz seed corpora through checked parsers
 #       tlsanvil     opt-in: TLS-Anvil via docker (~30 min; tests/tlsanvil)
+#       acvp         opt-in: NIST/BoringSSL ACVP vector sets through acvptool
+#                    against the module wrapper (tests/acvp; CI job "acvp")
 #   ./tests/run_all.sh --checked       # debug build, runtime checks + contracts
 #                                      # ON, runs unit + protocol + x509
 #   ./tests/run_all.sh --checked unit  # combine to filter lanes
@@ -135,6 +137,18 @@ cd "$REPO_ROOT"
 #  2026-09-14 and never built or exercised it.
 if [ -f cli/alire.toml ]; then
     build_or_die "CLI" cli
+fi
+
+#  The FIPS integrity post-link tool (tools/fips_inject); the integration
+#  lane injects and checks a linked example with it.
+if [ -f tools/fips_inject/fips_inject.gpr ]; then
+    eval $(alr -n --no-tty printenv --unix)
+    if ! gprbuild -q -P tools/fips_inject/fips_inject.gpr 2>&1 | tail -3; then :; fi
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -ne 0 ]; then
+        echo "FATAL: fips_inject build failed (exit $rc)"
+        exit 1
+    fi
 fi
 
 # Build x509 validator if .gpr exists
@@ -330,6 +344,11 @@ fi
 if echo "$SUITES" | grep -q "tlsanvil"; then
     section "TLS-Anvil (docker, ~30 min)"
     run_lane tlsanvil "TLS-Anvil" bash tests/tlsanvil/run.sh
+fi
+
+if echo "$SUITES" | grep -q "acvp"; then
+    section "ACVP vector sets (offline, acvptool)"
+    run_lane acvp "ACVP" bash tests/acvp/run.sh
 fi
 
 # ---------------------------------------------------------------------

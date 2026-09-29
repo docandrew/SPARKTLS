@@ -70,9 +70,12 @@ stop_server() {
 }
 
 #  start_server [extra server args...]
+#  --non-fips: tlsfuzzer checks protocol conformance across every
+#  algorithm, including ChaCha20, X25519 and TLS 1.2 without EMS, which
+#  most of its TLS 1.2 scripts do not send.
 start_server() {
     stop_server
-    "$SERVER" "$CERT" "$KEY" "$@" 2>/dev/null &
+    "$SERVER" "$CERT" "$KEY" --non-fips "$@" 2>/dev/null &
     SERVER_PID=$!
     if ! wait_for_server; then
         echo "Error: server failed to become ready within ${SERVER_START_TIMEOUT}s"

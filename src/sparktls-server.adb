@@ -2,6 +2,7 @@ with Interfaces;          use Interfaces;
 with SPARKTLS;
 with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
+with SPARKTLS.RBG;
 with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Server_Msgs;
@@ -117,14 +118,19 @@ is
    ----------------------------------------------------------------------------
    function Configure (Cfg : Config; Pool : in out Handshake_Pool) return Session
    is
+      Module_Mode : FIPS_Mode;
    begin
+      SPARKTLS.RBG.Get_Mode (Module_Mode);
       return S : Server_Session :=
         (Role   => Role_Server,
          State  => Wait_Client_Hello,
          HC     => (Cfg => Cfg, others => <>),
          others => <>)
       do
-         if not Server_Config_Can_Start (Cfg) then
+         --  A module started in FIPS mode offers approved algorithms only.
+         if not Server_Config_Can_Start (Cfg)
+           or else (Module_Mode = FIPS and then Cfg.Algorithms = Non_FIPS)
+         then
             Enter_Error_State (S, Bad_Configuration);
          else
 
@@ -506,7 +512,8 @@ is
                     | Suite_AES_256_GCM_SHA384
                     | Suite_CHACHA20_POLY1305_SHA256
               or else
-                not (S.HC.Client_Has_X25519
+                not ((S.HC.Client_Has_X25519
+                      and then Group_Allowed (S.HC.Cfg.Algorithms, Group_X25519))
                      or S.HC.Client_Has_P256
                      or S.HC.Client_Has_P384
                      or S.HC.Client_Has_X25519MLKEM768

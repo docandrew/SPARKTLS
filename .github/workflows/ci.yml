@@ -70,6 +70,31 @@ jobs:
             tests/bogo/obj/*.stdout
             tests/bogo/obj/*.stderr
 
+  acvp:
+    env:
+      ALR_NON_INTERACTIVE: "1"
+      NO_COLOR: "1"
+    name: ACVP vectors (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: false
+
+      # See the build-test job: the sibling crates are cloned next to this
+      # checkout at their pinned commits.
+      - name: Fetch sibling crates
+        run: bash ci/fetch-deps.sh
+
+      - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
+
+      # NIST's sample sets (pinned ACVP-Server commit) and the sets BoringSSL
+      # ships with acvptool (the BoGo BoringSSL pin), through acvptool
+      # against tests/acvp/acvp_wrapper; every answer checked. See
+      # tests/acvp/run.sh.
+      - name: ACVP vector sets
+        run: nix develop --command bash ci/acvp.sh
+
   timing:
     env:
       ALR_NON_INTERACTIVE: "1"

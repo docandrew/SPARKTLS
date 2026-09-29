@@ -13,9 +13,10 @@ import os, socket, struct, sys
 
 def client_hello():
     suites = b'\xc0\x2f'                               # ECDHE-RSA-AES128-GCM-SHA256
-    exts = struct.pack('>HH', 0x000a, 4) + b'\x00\x02\x00\x1d'   # supported_groups: x25519
+    exts = struct.pack('>HH', 0x000a, 4) + b'\x00\x02\x00\x17'   # supported_groups: P-256
     exts += struct.pack('>HH', 0x000b, 2) + b'\x01\x00'          # ec_point_formats
     exts += struct.pack('>HH', 0x000d, 4) + b'\x00\x02\x08\x04'  # rsa_pss_rsae_sha256
+    exts += struct.pack('>HH', 0x0017, 0)                         # extended_master_secret
     body = (b'\x03\x03' + os.urandom(32) + b'\x00' + struct.pack('>H', len(suites)) + suites
             + b'\x01\x00' + struct.pack('>H', len(exts)) + exts)
     hs = b'\x01' + struct.pack('>I', len(body))[1:] + body

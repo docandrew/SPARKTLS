@@ -19,7 +19,8 @@ project SPARKTLS_Examples is
                   "tls12_resume_test.adb",
                   "tls_verify_hook_client.adb",
                   "tls_authz_server.adb",
-                  "test_prf12.adb");
+                  "test_prf12.adb",
+                  "fips_integrity_check.adb");
 
    package Compiler is
       --  -gnat2022: sparktls.ads has a postcondition on an

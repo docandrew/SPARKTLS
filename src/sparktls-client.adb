@@ -1,6 +1,7 @@
 with Interfaces;          use Interfaces;
 with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
+with SPARKTLS.RBG;
 with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Client_Msgs;
@@ -81,6 +82,9 @@ is
        --  enforcement of the Valid_Identity_Access predicate (mirrors the
        --  server's Configure check; predicates do not execute in shipped builds).
        Identity_Valid (Cfg.Local.all)
+       --  A key-share restriction to a group the mode forbids (X25519 in
+       --  FIPS mode) could never complete a handshake.
+       and then Group_Allowed (Cfg.Algorithms, Cfg.Client_Key_Share_Group)
        and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
        and then (not Cfg.Resume_Ticket.Valid or else Cfg.Get_Time /= null)
        and then
@@ -302,8 +306,10 @@ is
    function Configure (Cfg : in Config; Pool : in out Handshake_Pool) return Session is
       OK            : Boolean;
       Resume_Usable : Boolean := False;
+      Module_Mode   : FIPS_Mode;
    begin
       Check_Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name, Resume_Usable);
+      SPARKTLS.RBG.Get_Mode (Module_Mode);
 
       return S : Client_Session :=
         (Role  => Role_Client,
@@ -313,7 +319,10 @@ is
          HC => (Cfg => Cfg, others => <>),
          others => <>)
       do
-         if not Client_Config_Can_Start (Cfg, Resume_Usable) then
+         --  A module started in FIPS mode offers approved algorithms only.
+         if not Client_Config_Can_Start (Cfg, Resume_Usable)
+           or else (Module_Mode = FIPS and then Cfg.Algorithms = Non_FIPS)
+         then
             Enter_Error_State (S, Bad_Configuration);
          else
             SPARKTLS.HS_Pool.Acquire (Pool, S.Slot);
@@ -604,6 +613,29 @@ is
          end if;
       else
          Reset (D.Reasm);
+      end if;
+
+      --  FIPS mode: the TLS 1.2 key derivation is approved only with the
+      --  Extended Master Secret (RFC 7627; FIPS 140-3 IG D.Q), which we
+      --  always offer. A server that did not echo it is refused.
+      if S.Version = TLS_1_2
+        and then S.HC.Cfg.Algorithms = FIPS
+        and then not S.HC.Use_EMS
+      then
+         Reset (D.Reasm);
+         declare
+            Ignored_A : N32;
+         begin
+            Abort_Flight (S);
+            Records.Build_Plaintext_Alert
+              (Level     => 2,
+               Desc      => Alert_Desc (Handshake_Failure),
+               Output    => S.Output,
+               Bytes_Out => Ignored_A);
+         end;
+         Enter_Error_State (S, Handshake_Failure);
+         Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
+         return;
       end if;
 
       if S.Version = TLS_1_3 then

@@ -76,6 +76,7 @@ procedure Test_Entropy_Failure is
       HC := (others => <>);
       HC.Client_Has_X25519 := True;
       HC.KE.Peer_PK        := (others => 16#01#);
+      HC.Cfg.Algorithms    := Non_FIPS;  --  the x25519 path
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
         (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
       Err := HC.Ext_Parse_Err;
