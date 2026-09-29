@@ -1,6 +1,9 @@
 --  fips_inject: write the module integrity MACs into a linked executable.
 --
---  Usage: fips_inject <executable>
+--  Usage: fips_inject [--if-present] <executable>...
+--
+--  --if-present skips files that are not ELF executables or do not link the
+--  module (no .fips_hmac section), so a whole bin/ directory can be passed.
 --
 --  The library's linker script (ld/sparktls_fips.ld) gathers the module's
 --  code into the section .fips_text and its read-only data into
@@ -23,8 +26,7 @@ with Ada.Streams.Stream_IO;
 with Ada.Text_IO;       use Ada.Text_IO;
 with Interfaces;        use Interfaces;
 with SPARKNaCl;
-with SPARKNaCl.MAC;
-with SPARKNaCl.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;
 
 procedure FIPS_Inject is
 
@@ -38,6 +40,11 @@ procedure FIPS_Inject is
 
    type Bytes is array (Unsigned_64 range <>) of Unsigned_8;
    type Bytes_Access is access Bytes;
+
+   --  Every large buffer is on the heap: a debug executable runs to tens
+   --  of megabytes, well past the default stack.
+   type Stream_Access is access Stream_Element_Array;
+   type Seq_Access is access SPARKNaCl.Byte_Seq;
 
    Image : Bytes_Access;
 
@@ -94,11 +101,11 @@ procedure FIPS_Inject is
    procedure Read_File (Path : String) is
       F    : Ada.Streams.Stream_IO.File_Type;
       Size : constant Unsigned_64 := Unsigned_64 (Ada.Directories.Size (Path));
-      Buf  : Stream_Element_Array (1 .. Stream_Element_Offset (Size));
+      Buf  : constant Stream_Access := new Stream_Element_Array (1 .. Stream_Element_Offset (Size));
       Last : Stream_Element_Offset;
    begin
       Ada.Streams.Stream_IO.Open (F, Ada.Streams.Stream_IO.In_File, Path);
-      Ada.Streams.Stream_IO.Read (F, Buf, Last);
+      Ada.Streams.Stream_IO.Read (F, Buf.all, Last);
       Ada.Streams.Stream_IO.Close (F);
       if Last /= Buf'Last then
          Fail ("short read");
@@ -111,13 +118,14 @@ procedure FIPS_Inject is
 
    procedure Write_File (Path : String) is
       F   : Ada.Streams.Stream_IO.File_Type;
-      Buf : Stream_Element_Array (1 .. Stream_Element_Offset (Image'Length));
+      Buf : constant Stream_Access :=
+        new Stream_Element_Array (1 .. Stream_Element_Offset (Image'Length));
    begin
       for I in Buf'Range loop
          Buf (I) := Stream_Element (Image (Unsigned_64 (I - 1)));
       end loop;
       Ada.Streams.Stream_IO.Open (F, Ada.Streams.Stream_IO.Out_File, Path);
-      Ada.Streams.Stream_IO.Write (F, Buf);
+      Ada.Streams.Stream_IO.Write (F, Buf.all);
       Ada.Streams.Stream_IO.Close (F);
    end Write_File;
 
@@ -226,62 +234,124 @@ procedure FIPS_Inject is
       end loop;
    end Check_No_Relocations;
 
-   --  HMAC-SHA-256 with a zero key over [Lo, Hi) as it sits in the file,
-   --  the same computation SPARKTLS.Integrity makes over loaded memory.
+   --  HMAC-SHA-256 (RFC 2104, 32-byte zero key) over [Lo, Hi) as it sits in
+   --  the file, computed incrementally in slices: the same computation
+   --  SPARKTLS.Integrity makes over the loaded image.
    function Range_MAC (Lo, Hi : Unsigned_64; What : String) return SPARKNaCl.Byte_Seq is
       use SPARKNaCl;
-      Len : constant Unsigned_64 := Hi - Lo;
-      Off : Unsigned_64;
-      Key : constant Byte_Seq (0 .. 31) := (others => 0);
-      D   : Hashing.SHA256.Digest;
+      package H renames SPARKTLSCrypto.Hashing.SHA256;
+      Slice : constant := 65_536;
+      Len   : constant Unsigned_64 := Hi - Lo;
+      Off   : Unsigned_64;
+      Ipad  : constant Byte_Seq (0 .. 63) := (others => 16#36#);
+      Opad  : constant Byte_Seq (0 .. 63) := (others => 16#5C#);
+      Buf   : constant Seq_Access := new Byte_Seq (0 .. Slice - 1);
+      Ctx   : H.Context;
+      Inner : H.Digest;
+      Outer : H.Digest;
+      Done  : Unsigned_64 := 0;
    begin
       if Hi <= Lo then
          Fail ("empty " & What & " range");
       end if;
       Check_No_Relocations (Lo, Hi, What);
       Off := File_Offset (Lo, Len);
-      declare
-         M : Byte_Seq (0 .. N32 (Len) - 1);
-      begin
-         for I in M'Range loop
-            M (I) := Byte (Image (Off + Unsigned_64 (I)));
-         end loop;
-         MAC.HMAC_SHA_256 (D, M, Key);
-      end;
+      H.Init (Ctx);
+      H.Update (Ctx, Ipad);
+      while Done < Len loop
+         declare
+            N : constant Unsigned_64 := Unsigned_64'Min (Slice, Len - Done);
+         begin
+            for I in 0 .. N - 1 loop
+               Buf (N32 (I)) := Byte (Image (Off + Done + I));
+            end loop;
+            H.Update (Ctx, Buf (0 .. N32 (N) - 1));
+            Done := Done + N;
+         end;
+      end loop;
+      H.Final (Ctx, Inner);
+      H.Init (Ctx);
+      H.Update (Ctx, Opad);
+      H.Update (Ctx, Byte_Seq (Inner));
+      H.Final (Ctx, Outer);
       Put_Line (What & ":" & Len'Image & " bytes hashed");
-      return Byte_Seq (D);
+      return Byte_Seq (Outer);
    end Range_MAC;
 
-begin
-   if Argument_Count /= 1 then
-      Put_Line (Standard_Error, "usage: fips_inject <executable>");
-      Set_Exit_Status (Ada.Command_Line.Failure);
-      return;
-   end if;
+   function Is_ELF return Boolean is
+     (Image'Length >= 64
+      and then Image (0 .. 3) = (16#7F#, Character'Pos ('E'), Character'Pos ('L'), Character'Pos ('F')));
 
-   Read_File (Argument (1));
-   Parse_Sections;
-   declare
-      use SPARKNaCl;
-      Text   : constant Section := Find_Section (".fips_text");
-      Rodata : constant Section := Find_Section (".fips_rodata");
-      Slot_S : constant Section := Find_Section (".fips_hmac");
-      Code_MAC : constant Byte_Seq := Range_MAC (Text.Addr, Text.Addr + Text.Size, "code");
-      Data_MAC : constant Byte_Seq :=
-        Range_MAC (Rodata.Addr, Rodata.Addr + Rodata.Size, "read-only data");
-      MACs : constant Byte_Seq := Code_MAC & Data_MAC;
-      Slot : Unsigned_64;
+   function Has_Section (Name : String) return Boolean is
    begin
-      if Slot_S.Size /= 64 then
-         Fail (".fips_hmac is" & Slot_S.Size'Image & " bytes, expected 64");
-      end if;
-      Slot := File_Offset (Slot_S.Addr, 64);
-      for I in MACs'Range loop
-         Image (Slot + Unsigned_64 (I)) := Unsigned_8 (MACs (I));
+      for S of Sections.all loop
+         if (S.Flags and SHF_ALLOC) /= 0 and then Section_Name (S) = Name then
+            return True;
+         end if;
       end loop;
-   end;
-   Write_File (Argument (1));
-   Put_Line ("integrity MACs written to " & Argument (1));
+      return False;
+   end Has_Section;
+
+   --  Inject one executable; with If_Present, quietly skip anything that
+   --  does not link the module.
+   procedure Inject (Path : String; If_Present : Boolean) is
+      use Ada.Directories;
+   begin
+      if not Exists (Path) or else Kind (Path) /= Ordinary_File then
+         if If_Present then
+            return;
+         end if;
+         Fail (Path & " is not a regular file");
+      end if;
+      Read_File (Path);
+      if If_Present and then not Is_ELF then
+         return;
+      end if;
+      Parse_Sections;
+      if If_Present and then not Has_Section (".fips_hmac") then
+         return;
+      end if;
+      declare
+         use SPARKNaCl;
+         Text   : constant Section := Find_Section (".fips_text");
+         Rodata : constant Section := Find_Section (".fips_rodata");
+         Slot_S : constant Section := Find_Section (".fips_hmac");
+         Code_MAC : constant Byte_Seq := Range_MAC (Text.Addr, Text.Addr + Text.Size, "code");
+         Data_MAC : constant Byte_Seq :=
+           Range_MAC (Rodata.Addr, Rodata.Addr + Rodata.Size, "read-only data");
+         MACs : constant Byte_Seq := Code_MAC & Data_MAC;
+         Slot : Unsigned_64;
+      begin
+         if Slot_S.Size /= 64 then
+            Fail (".fips_hmac is" & Slot_S.Size'Image & " bytes, expected 64");
+         end if;
+         Slot := File_Offset (Slot_S.Addr, 64);
+         for I in MACs'Range loop
+            Image (Slot + Unsigned_64 (I)) := Unsigned_8 (MACs (I));
+         end loop;
+      end;
+      Write_File (Path);
+      Put_Line ("integrity MACs written to " & Path);
+   end Inject;
+
+   If_Present : Boolean := False;
+   Files      : Natural := 0;
+begin
+   for I in 1 .. Argument_Count loop
+      if Argument (I) = "--if-present" then
+         If_Present := True;
+      end if;
+   end loop;
+   for I in 1 .. Argument_Count loop
+      if Argument (I) /= "--if-present" then
+         Files := Files + 1;
+         Inject (Argument (I), If_Present);
+      end if;
+   end loop;
+   if Files = 0 then
+      Put_Line (Standard_Error, "usage: fips_inject [--if-present] <executable>...");
+      Set_Exit_Status (Ada.Command_Line.Failure);
+   end if;
 exception
    when Tool_Error =>
       Set_Exit_Status (Ada.Command_Line.Failure);

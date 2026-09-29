@@ -272,8 +272,8 @@ procedure MTLS_Test_Client is
    end Recv_Once;
 
 begin
-   Entropy_Random.Init;
    Parse_Args;
+   Entropy_Random.Init (Mode => Cfg_Algorithms);
 
    if Cfg_Port = 0 then
       Err ("--port required");

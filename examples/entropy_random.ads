@@ -7,6 +7,7 @@
 --  servers watch SPARKTLS.RBG.Status and stop accepting connections.
 --  Every handshake in between fails closed with Entropy_Failure.
 with SPARKNaCl;
+with SPARKTLS;
 
 package Entropy_Random is
 
@@ -14,7 +15,9 @@ package Entropy_Random is
    --  are always reported on standard error; Verbose adds a start-up line
    --  on success (quiet by default: the BoGo shim must keep its output
    --  streams clean).
-   procedure Init (Verbose : Boolean := False);
+   --  Starts the module (SPARKTLS.Initialize) in Mode: FIPS runs the
+   --  integrity test and restricts sessions to approved algorithms.
+   procedure Init (Verbose : Boolean := False; Mode : SPARKTLS.FIPS_Mode := SPARKTLS.FIPS);
 
    --  Draw from SPARKTLS.RBG, starting it quietly if Init was not called
    --  (for helpers such as the example software signer).

@@ -1408,10 +1408,43 @@ if [ ! -x "$INTEG" ] || [ ! -x "$INJECT" ]; then
 else
     work=$(mktemp -d)
     cp "$INTEG" "$work/check"
+    #  The examples' post-build action has already injected it: put the
+    #  placeholder back to get a binary fips_inject has not processed.
+    python3 - "$work/check" <<'PY'
+import re, subprocess, sys
+path = sys.argv[1]
+out = subprocess.run(["readelf", "-SW", path], capture_output=True, text=True).stdout
+m = re.search(r"\.fips_hmac\s+PROGBITS\s+[0-9a-f]+\s+([0-9a-f]+)\s+([0-9a-f]+)", out)
+off = int(m.group(1), 16)
+b = bytearray(open(path, "rb").read()); b[off:off + 64] = b"\xa5" * 64
+open(path, "wb").write(b)
+PY
     if "$work/check" > /dev/null; then
         fail "Integrity check refuses a binary fips_inject has not processed"
     else
         pass "Integrity check refuses a binary fips_inject has not processed"
+    fi
+    #  RBG.Init runs the integrity test in FIPS mode only.
+    if "$work/check" --rbg > /dev/null; then
+        fail "RBG.Init (FIPS) refuses a binary fips_inject has not processed"
+    else
+        pass "RBG.Init (FIPS) refuses a binary fips_inject has not processed"
+    fi
+    if "$work/check" --rbg --non-fips > /dev/null; then
+        pass "RBG.Init (Non_FIPS) starts without fips_inject"
+    else
+        fail "RBG.Init (Non_FIPS) starts without fips_inject"
+    fi
+    if "$work/check" --sequence > /dev/null; then
+        pass "Later FIPS Init runs the integrity test; its failure stays latched"
+    else
+        fail "Later FIPS Init runs the integrity test; its failure stays latched"
+    fi
+    #  A module started in FIPS mode refuses Non_FIPS sessions.
+    if "$INTEG" --mismatch > /dev/null; then
+        pass "FIPS module refuses a Non_FIPS session, accepts a FIPS one"
+    else
+        fail "FIPS module refuses a Non_FIPS session, accepts a FIPS one"
     fi
     if "$INJECT" "$work/check" > /dev/null && "$work/check" > /dev/null; then
         pass "Integrity check passes after fips_inject"

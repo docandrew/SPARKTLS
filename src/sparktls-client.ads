@@ -6,7 +6,7 @@ is
    ----------------------------------------------------------------------------
    --  Client-side TLS 1.3 session management
    --
-   --  Usage (blocking). SPARKTLS.RBG.Init has run, and Handshakes is a
+   --  Usage (blocking). SPARKTLS.Initialize has run, and Handshakes is a
    --  library-level SPARKTLS.Handshake_Pool (see Handshake_Pool):
    --
    --    Cfg : SPARKTLS.Config := (Server_Name => ..., Trust => ..., others => <>);

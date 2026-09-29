@@ -2,6 +2,7 @@ with Interfaces;          use Interfaces;
 with SPARKTLS;
 with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
+with SPARKTLS.RBG;
 with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Server_Msgs;
@@ -117,14 +118,19 @@ is
    ----------------------------------------------------------------------------
    function Configure (Cfg : Config; Pool : in out Handshake_Pool) return Session
    is
+      Module_Mode : FIPS_Mode;
    begin
+      SPARKTLS.RBG.Get_Mode (Module_Mode);
       return S : Server_Session :=
         (Role   => Role_Server,
          State  => Wait_Client_Hello,
          HC     => (Cfg => Cfg, others => <>),
          others => <>)
       do
-         if not Server_Config_Can_Start (Cfg) then
+         --  A module started in FIPS mode offers approved algorithms only.
+         if not Server_Config_Can_Start (Cfg)
+           or else (Module_Mode = FIPS and then Cfg.Algorithms = Non_FIPS)
+         then
             Enter_Error_State (S, Bad_Configuration);
          else
 

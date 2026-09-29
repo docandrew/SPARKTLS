@@ -1035,7 +1035,7 @@ is
    --
    --  Every random byte the library uses comes from SPARKTLS.RBG, the
    --  process-wide SP 800-90A HMAC_DRBG the application starts once with
-   --  RBG.Init and its entropy source (SPARKEntropy in the examples).
+   --  SPARKTLS.Initialize and its entropy source (SPARKEntropy in the examples).
    --  There is no per-configuration generator to supply or forget.
    --
    --  The one thing the library checks itself is that a draw is not all

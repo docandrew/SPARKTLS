@@ -1,5 +1,7 @@
 with SPARKTLSCrypto.HMAC_DRBG;
 with SHAKE;
+with SPARKTLS.Integrity;
+with SPARKTLS.Self_Tests;
 
 package body SPARKTLS.RBG with
    SPARK_Mode => On
@@ -123,10 +125,27 @@ is
    --  The generator
    ----------------------------------------------------------------------------
 
+   --  The FIPS 140-3 pre-operational and algorithm self-tests, run once per
+   --  process by the first Start_Up. Failed is permanent: the module stays
+   --  in its error state until the process restarts, which is the re-test
+   --  (IG 10.3.E); Shutdown does not clear it.
+   type Module_Test is (Untested, Passed, Failed);
+
    protected Gen is
-      --  Claim the start-up sequence: False if already Ready or another
-      --  task is seeding.
+      --  Claim the start-up sequence: False if already Ready, another task
+      --  is seeding, or the module failed its self-tests.
       procedure Begin_Init (Go : out Boolean);
+
+      procedure Note_Module_Tests (OK : Boolean);
+      function Module_State return Module_Test;
+
+      --  The integrity test runs only for Init in FIPS mode, so a process
+      --  whose first Init was Non_FIPS runs it at its first FIPS Init.
+      procedure Note_Integrity (OK : Boolean);
+      function Integrity_Verified return Boolean;
+
+      procedure Note_Mode (Mode : FIPS_Mode);
+      function Started_Mode return FIPS_Mode;
 
       --  Instantiate the core from Seed (source output), then the serving
       --  DRBG from the core. OK = False leaves the generator unchanged.
@@ -191,6 +210,9 @@ is
       Failure_Fn  : Entropy_Failure_Fn := null;
       Src_OSR     : Natural := 0;
       Src_Resets  : Natural := 0;
+      Module      : Module_Test := Untested;
+      Integrity_OK : Boolean := False;
+      Start_Mode   : FIPS_Mode := Non_FIPS;
    end Gen;
 
    protected body Gen is
@@ -206,11 +228,35 @@ is
 
       procedure Begin_Init (Go : out Boolean) is
       begin
-         Go := St /= Ready and then not Seeding;
+         Go := St /= Ready and then not Seeding and then Module /= Failed;
          if Go then
             Seeding := True;
          end if;
       end Begin_Init;
+
+      procedure Note_Module_Tests (OK : Boolean) is
+      begin
+         Module := (if OK then Passed else Failed);
+      end Note_Module_Tests;
+
+      function Module_State return Module_Test is (Module);
+
+      procedure Note_Integrity (OK : Boolean) is
+      begin
+         Integrity_OK := OK;
+         if not OK then
+            Module := Failed;
+         end if;
+      end Note_Integrity;
+
+      function Integrity_Verified return Boolean is (Integrity_OK);
+
+      procedure Note_Mode (Mode : FIPS_Mode) is
+      begin
+         Start_Mode := Mode;
+      end Note_Mode;
+
+      function Started_Mode return FIPS_Mode is (Start_Mode);
 
       procedure Instantiate
         (Seed          : Byte_Seq;
@@ -389,6 +435,7 @@ is
          Failure_Fn := null;
          Src_OSR    := 0;
          Src_Resets := 0;
+         Start_Mode := Non_FIPS;
       end Stop;
 
       function Current return RBG_Status is (St);
@@ -432,6 +479,12 @@ is
       end if;
    end Source_Failed;
 
+   procedure Conditional_Test_Failed is
+   begin
+      Gen.Note_Module_Tests (False);
+      Source_Failed;
+   end Conditional_Test_Failed;
+
    --  The start-up sequence (SP 800-90C 8.1.1), on the jitter source when
    --  Injected is null, else on Injected (tests only).
    procedure Start_Up
@@ -441,7 +494,8 @@ is
       OK              : out Boolean;
       On_Failure      : Entropy_Failure_Fn;
       Reseed_Requests : Positive;
-      Core_Requests   : Natural)
+      Core_Requests   : Natural;
+      Mode            : FIPS_Mode)
    is
       Seed     : Byte_Seq (0 .. Seed_Len - 1) := (others => 0);
       Go       : Boolean;
@@ -462,6 +516,42 @@ is
          end;
          return;
       end if;
+      --  0. FIPS 140-3 self-tests, once per process: HMAC-SHA-256 first, the
+      --     integrity test that relies on it (IG 10.2.A), then every other
+      --     approved algorithm (IG 10.3.A). They run outside the protected
+      --     object; only the result is recorded there.
+      --     The integrity test runs in FIPS mode only; a process whose
+      --     first Init was Non_FIPS runs it at its first FIPS Init.
+      declare
+         Before   : constant Module_Test := Gen.Module_State;
+         Verified : constant Boolean := Gen.Integrity_Verified;
+         Tests_OK : Boolean;
+         Intact   : Boolean;
+      begin
+         if Before = Untested then
+            Self_Tests.HMAC_SHA256 (Tests_OK);
+            if Tests_OK and then Mode = FIPS then
+               Integrity.Check (Intact);
+               Gen.Note_Integrity (Intact);
+               Tests_OK := Intact;
+            end if;
+            if Tests_OK then
+               Self_Tests.Remaining (Tests_OK);
+            end if;
+            Gen.Note_Module_Tests (Tests_OK);
+         elsif Before = Passed and then Mode = FIPS and then not Verified then
+            Integrity.Check (Intact);
+            Gen.Note_Integrity (Intact);
+         end if;
+      end;
+      declare
+         After : constant Module_Test := Gen.Module_State;
+      begin
+         if After /= Passed then
+            Gen.Fail (Notify, Failure);
+            return;
+         end if;
+      end;
       --  1. The entropy source's start-up health tests.
       if Injected = null then
          Jitter_Start (OSR, Start_OK);
@@ -480,6 +570,9 @@ is
          end if;
          if Seed_OK and then not All_Zero_Bytes (Seed) then
             Gen.Instantiate (Seed, Injected, On_Failure, Reseed_Requests, Core_Interval, OK);
+            if OK then
+               Gen.Note_Mode (Mode);
+            end if;
          end if;
       end if;
       if not OK then
@@ -499,21 +592,29 @@ is
       On_Failure      : Entropy_Failure_Fn := null;
       OSR             : Natural := SPARKEntropy.Min_OSR;
       Reseed_Requests : Positive := Default_Reseed_Requests;
-      Core_Requests   : Natural := 0)
+      Core_Requests   : Natural := 0;
+      Mode            : FIPS_Mode := FIPS)
    is
    begin
-      Start_Up (Source, Start_OK, OSR, OK, On_Failure, Reseed_Requests, Core_Requests);
+      Start_Up (Source, Start_OK, OSR, OK, On_Failure, Reseed_Requests, Core_Requests, Mode);
    end Init_With;
 
    procedure Init
      (OK              : out Boolean;
       On_Failure      : Entropy_Failure_Fn := null;
       OSR             : SPARKEntropy.OSR_Range := SPARKEntropy.Min_OSR;
-      Reseed_Requests : Positive := Default_Reseed_Requests)
+      Reseed_Requests : Positive := Default_Reseed_Requests;
+      Mode            : FIPS_Mode := FIPS)
    is
    begin
-      Start_Up (null, True, OSR, OK, On_Failure, Reseed_Requests, 0);
+      Start_Up (null, True, OSR, OK, On_Failure, Reseed_Requests, 0, Mode);
    end Init;
+
+   procedure Get_Mode (Mode : out FIPS_Mode) is
+      M : constant FIPS_Mode := Gen.Started_Mode;
+   begin
+      Mode := M;
+   end Get_Mode;
 
    procedure Reseed (OK : out Boolean) is
       Go     : Boolean;

@@ -20,6 +20,7 @@ with RFLX.TLS_Handshake.CH_Extension_TLS;
 with RFLX.TLS_Handshake.Key_Share_SH;
 with MLKEM;
 with MLKEM.ML_KEM_768;
+with SPARKTLS.RBG;
 with RFLX.TLS_Handshake.Key_Share_HRR;
 with RFLX.TLS_Handshake.Hello_Retry_Request;
 with RFLX.TLS_Handshake.HRR_Extensions_TLS;
@@ -944,6 +945,40 @@ is
                   return;
                end if;
                MLKEM.ML_KEM_768.MLKEM_KeyGen (MLKEM.Bytes_32 (D), MLKEM.Bytes_32 (Z), Key);
+               --  FIPS 140-3 IG 10.3.A: a pairwise consistency test on every
+               --  generated key pair. Encapsulate to the new key with fresh
+               --  randomness and decapsulate; the two secrets must agree. A
+               --  failure latches the module's error state.
+               declare
+                  use MLKEM.ML_KEM_768;
+                  M      : Bytes_32 := (others => 0);
+                  K1, K2 : MLKEM.Bytes_32 := (others => 0);
+                  C      : Ciphertext := (others => 0);
+                  Agree  : Boolean := False;
+               begin
+                  Draw (Byte_Seq (M), Rand_OK);
+                  if Rand_OK
+                    and then EK_Valid_For_Encaps (Key.EK)
+                    and then DK_Valid_For_Decaps (Key.DK)
+                  then
+                     MLKEM_Encaps (Key.EK, MLKEM.Bytes_32 (M), K1, C);
+                     MLKEM_Decaps (C, Key.DK, K2);
+                     Agree := MLKEM."=" (K1, K2);
+                  end if;
+                  Sanitize (M);
+                  MLKEM.Sanitize (K1);
+                  MLKEM.Sanitize (K2);
+                  if not Agree then
+                     if Rand_OK then
+                        SPARKTLS.RBG.Conditional_Test_Failed;
+                     end if;
+                     MLKEM.Sanitize (Key.DK);
+                     Sanitize (D);
+                     Sanitize (Z);
+                     Sanitize (SK);
+                     return;
+                  end if;
+               end;
                KE.Hybrid_DK := Key.DK;
                MLKEM.Sanitize (Key.DK);
                Sanitize (D);

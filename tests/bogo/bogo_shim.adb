@@ -153,6 +153,14 @@ procedure Bogo_Shim is
 
    Cfg : Config_T;
 
+   --  The shim's clock is frozen at start-up and moves only by the flags
+   --  that advance it (-resumption-delay), as BoringSSL's shim clock does.
+   --  Reading the wall clock let the client's ticket age cross a second
+   --  boundary between the two connections: TLS13-TestValidTicketAge-Client
+   --  expects exactly the configured delay and failed intermittently on
+   --  slow CI runners.
+   Start_Time : constant Ada.Calendar.Time := Ada.Calendar.Clock;
+
    --  BoGo credential blocks (runner.go appendCredentialFlags): each
    --  -new-x509-credential opens a block whose -cert-file / -key-file /
    --  -ocsp-response / -signing-prefs / -must-match-issuer follow, in
@@ -257,7 +265,7 @@ procedure Bogo_Shim is
 
    function Current_Time return X509.Date_Time is
       use Ada.Calendar;
-      Now : constant Time := Clock + Duration (Cfg.Time_Offset_Seconds);
+      Now : constant Time := Start_Time + Duration (Cfg.Time_Offset_Seconds);
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
@@ -2391,7 +2399,9 @@ procedure Bogo_Shim is
    end Run_Handshake;
 
 begin
-   Entropy_Random.Init;
+   --  The shim runs Non_FIPS sessions (every algorithm), so the module is
+   --  started in Non_FIPS mode.
+   Entropy_Random.Init (Mode => SPARKTLS.Non_FIPS);
    --  Install the fixed TLS 1.2 ticket key into the shared cache. The
    --  library no longer holds ticket keys, so the shim owns this now.
    SPARKTLS.Ticket_Keys.Rotate_TEK (BoGo_Key_ID, BoGo_TEK, 0);

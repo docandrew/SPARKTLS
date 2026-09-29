@@ -434,7 +434,12 @@ begin
    --  Randomness: SPARKEntropy behind SPARKTLS.RBG (see entropy_random.ads).
    --  Started here, before the first draw, so a platform without usable
    --  jitter fails at start-up rather than in a handshake.
-   Entropy_Random.Init (Verbose => True);
+   for I in 3 .. Ada.Command_Line.Argument_Count loop
+      if Ada.Command_Line.Argument (I) = "--non-fips" then
+         Algorithms := SPARKTLS.Non_FIPS;
+      end if;
+   end loop;
+   Entropy_Random.Init (Verbose => True, Mode => Algorithms);
    if SPARKTLS.RBG.Status /= SPARKTLS.RBG.Ready then
       return;
    end if;
@@ -564,12 +569,9 @@ begin
       end if;
    end loop;
 
-   for I in 3 .. Ada.Command_Line.Argument_Count loop
-      if Ada.Command_Line.Argument (I) = "--non-fips" then
-         Algorithms := SPARKTLS.Non_FIPS;
-         Put_Line ("Algorithms: Non_FIPS");
-      end if;
-   end loop;
+   if Algorithms = SPARKTLS.Non_FIPS then
+      Put_Line ("Algorithms: Non_FIPS");
+   end if;
 
    Put_Line ("=== SPARKTLS Blocking Server ===");
    Put_Line ("Listening on 0.0.0.0:" & Port'Image);

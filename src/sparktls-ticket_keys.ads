@@ -115,7 +115,7 @@ is
    --  Until this is called there is no key, so no tickets are issued and
    --  clients simply perform full handshakes.
    --
-   --  Key material comes from SPARKTLS.RBG, so RBG.Init must have run.
+   --  Key material comes from SPARKTLS.RBG, so SPARKTLS.Initialize must have run.
    --  A draw that comes back empty (the generator has latched off)
    --  installs or rotates no key.
    procedure Initialize

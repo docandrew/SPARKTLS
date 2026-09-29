@@ -100,6 +100,12 @@ if [ "$BUILD_RC" -ne 0 ]; then
     echo "  FATAL: shim build FAILED — refusing to run against a stale binary."
     exit 1
 fi
+#  FIPS integrity test: the shim starts SPARKTLS.RBG, which refuses to run
+#  until the module MACs are in the linked binary.
+if ! (cd "$REPO_ROOT" && tools/fips_inject/inject_all.sh "$SHIM"); then
+    echo "  FATAL: fips_inject failed on the shim."
+    exit 1
+fi
 
 # --- 2. Install Go locally if not on PATH and not cached -------------
 if command -v go >/dev/null 2>&1; then

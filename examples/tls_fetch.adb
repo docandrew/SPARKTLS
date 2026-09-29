@@ -255,8 +255,6 @@ procedure TLS_Fetch is
    CAFile_Arg   : Natural := 0;
 
 begin
-   Entropy_Random.Init;
-
    --  Parse arguments
    for I in 1 .. Ada.Command_Line.Argument_Count loop
       declare
@@ -294,6 +292,9 @@ begin
          end if;
       end;
    end loop;
+
+   --  After parsing: --non-fips starts the module in Non_FIPS mode.
+   Entropy_Random.Init (Mode => Algorithms);
 
    if URL_Arg = 0 then
       Put_Line ("Usage: tls_fetch [-v] [-I] [-k] [--cafile <pem>] <https://...>");

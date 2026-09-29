@@ -1,6 +1,7 @@
 with Interfaces;          use Interfaces;
 with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
+with SPARKTLS.RBG;
 with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Client_Msgs;
@@ -305,8 +306,10 @@ is
    function Configure (Cfg : in Config; Pool : in out Handshake_Pool) return Session is
       OK            : Boolean;
       Resume_Usable : Boolean := False;
+      Module_Mode   : FIPS_Mode;
    begin
       Check_Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name, Resume_Usable);
+      SPARKTLS.RBG.Get_Mode (Module_Mode);
 
       return S : Client_Session :=
         (Role  => Role_Client,
@@ -316,7 +319,10 @@ is
          HC => (Cfg => Cfg, others => <>),
          others => <>)
       do
-         if not Client_Config_Can_Start (Cfg, Resume_Usable) then
+         --  A module started in FIPS mode offers approved algorithms only.
+         if not Client_Config_Can_Start (Cfg, Resume_Usable)
+           or else (Module_Mode = FIPS and then Cfg.Algorithms = Non_FIPS)
+         then
             Enter_Error_State (S, Bad_Configuration);
          else
             SPARKTLS.HS_Pool.Acquire (Pool, S.Slot);

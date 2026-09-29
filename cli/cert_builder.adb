@@ -8,39 +8,27 @@ with SPARKNaCl.Hashing.SHA384;
 with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.P384.ECDSA;
 with SPARKTLSCrypto.RFC6979;
-with SPARKEntropy;
+with CLI_Random;
 
 package body Cert_Builder is
    use type X509.Byte;
    use type SPARKNaCl.N32;
    use DER_Builder;
 
-   --  Entropy for serial number and ECDSA nonce
-   Entropy : SPARKEntropy.Entropy_State;
+   --  Randomness for serial numbers and ECDSA blinding: the module's
+   --  generator (see CLI_Random).
    Entropy_Ready : Boolean := False;
 
    procedure Ensure_Entropy is
-      OK : Boolean;
    begin
-      if not Entropy_Ready then
-         SPARKEntropy.Init (Entropy, OK);
-         Entropy_Ready := OK;
-      end if;
+      CLI_Random.Start (Entropy_Ready);
    end Ensure_Entropy;
 
-   --  OK = False means the entropy source failed its health test; the
-   --  caller must abort, never use the (zeroed) output.
+   --  OK = False means the generator is not running or failed; the caller
+   --  must abort, never use the (zeroed) output.
    procedure Get_Random (Output : out X509.Byte_Seq; OK : out Boolean) is
-      Buf : SPARKEntropy.Byte_Seq (0 .. Output'Length - 1);
    begin
-      Output := (others => 0);
-      SPARKEntropy.Generate (Entropy, Buf, OK);
-      if not OK then
-         return;
-      end if;
-      for I in Output'Range loop
-         Output (I) := X509.Byte (Buf (Natural (I - Output'First)));
-      end loop;
+      CLI_Random.Get (Output, OK);
    end Get_Random;
 
    --  Get current time as X509.Date_Time

@@ -1,6 +1,6 @@
 --  Post-link step for the FIPS 140-3 software integrity test. Not part of
 --  the library; applications run it once on their linked executable.
-with "sparknacl.gpr";
+with "sparktlscrypto.gpr";
 
 project FIPS_Inject is
    for Source_Dirs use ("src");

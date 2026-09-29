@@ -10,7 +10,7 @@ is
    --  server begins by waiting for a ClientHello rather than
    --  sending one.
    --
-   --  Usage (blocking). SPARKTLS.RBG.Init has run, and Handshakes is a
+   --  Usage (blocking). SPARKTLS.Initialize has run, and Handshakes is a
    --  library-level SPARKTLS.Handshake_Pool (see Handshake_Pool):
    --
    --    Cfg : SPARKTLS.Config := (Local => My_Identity, others => <>);

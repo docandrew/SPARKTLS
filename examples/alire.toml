@@ -16,3 +16,9 @@ sparkentropy = "~0.0.1"
 [[pins]]
 sparktls = { path='..' }
 sparkentropy = { path='../../sparkentropy' }
+
+#  FIPS 140-3 integrity test: write the module MACs into every executable
+#  this crate links (tools/fips_inject); without it RBG.Init refuses to start.
+[[actions]]
+type = "post-build"
+command = ["bash", "../tools/fips_inject/inject_all.sh", "../bin/examples"]
