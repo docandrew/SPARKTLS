@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Runners are pinned to ubuntu-24.04 (glibc 2.39), not ubuntu-latest: the
+# timing and ctgrind lanes link with Alire's gcc against the runner's glibc,
+# then run under the flake's loader and glibc (2.42). A runner image newer
+# than the flake's glibc breaks them ("GLIBC_2.43 not found"). Move the image
+# and the flake's nixpkgs together, deliberately.
 jobs:
   build-test:
     env:
@@ -21,7 +26,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           # aarch64 is disabled until SPARKTLSCrypto builds without x86 asm.
           # Its accelerated units (AES-NI, GHASH-NI, four AVX-512 modules --
           # 12 files) call System.Machine_Code.Asm with x86 instructions and
@@ -75,7 +80,7 @@ jobs:
       ALR_NON_INTERACTIVE: "1"
       NO_COLOR: "1"
     name: ACVP vectors (offline)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -100,7 +105,7 @@ jobs:
       ALR_NON_INTERACTIVE: "1"
       NO_COLOR: "1"
     name: timing (x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
