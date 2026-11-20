@@ -14,7 +14,10 @@
 --
 --  What each test covers:
 --    HMAC-SHA-256 (and so SHA-256), HMAC-SHA-384 (and SHA-384), SHA-512
---    AES-GCM encrypt and decrypt, 128- and 256-bit keys
+--    AES-GCM encrypt and decrypt, 128- and 256-bit keys, through the
+--      one-shot entry points (GCM_KAT) and through the prepared ones on the
+--      tier the CPU will use, with forged records that must be rejected
+--      and zeroed (SPARKTLSCrypto.AES_GCM.Self_Test)
 --    HKDF (SP 800-56C), the TLS 1.2 PRF with the Extended Master Secret,
 --      the TLS 1.3 HKDF-Expand-Label
 --    ECDSA sign and verify, P-256 and P-384; ECDH shared secret, both curves
