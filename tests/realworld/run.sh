@@ -156,7 +156,14 @@ echo "=== badssl.com matrix ==="
 BS_PASS=0
 BS_FAIL=0
 
-if ! getent hosts badssl.com >/dev/null 2>&1; then
+# Opt-in only: these are third-party servers whose certificates and TLS
+# configuration change without notice, so their results move between runs
+# and say little about this library. CI never runs them; run them by hand
+# with SPARKTLS_BADSSL=1 when working on certificate validation or TLS 1.2.
+if [ "${SPARKTLS_BADSSL:-0}" != "1" ]; then
+    echo "  SKIP: the badssl.com matrix runs only with SPARKTLS_BADSSL=1 (third-party servers, not a CI signal)"
+    SKIP=$((SKIP + ${#BADSSL[@]}))
+elif ! getent hosts badssl.com >/dev/null 2>&1; then
     echo "  SKIP: badssl.com does not resolve"
     SKIP=$((SKIP + ${#BADSSL[@]}))
 else
