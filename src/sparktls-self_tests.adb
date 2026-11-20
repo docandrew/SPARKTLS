@@ -310,6 +310,7 @@ is
       HMAC_SHA384_KAT (OK);
       if OK then SHA512_KAT (OK);    end if;
       if OK then GCM_KAT (OK);       end if;
+      if OK then SPARKTLSCrypto.AES_GCM.Self_Test (OK); end if;
       if OK then HKDF_KAT (OK);      end if;
       if OK then TLS12_PRF_KAT (OK); end if;
       if OK then TLS13_KDF_KAT (OK); end if;
