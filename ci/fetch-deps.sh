@@ -30,7 +30,7 @@ SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
 SPARKX509_REF="${SPARKX509_REF:-2a33ed8b68ca69aa6e3009d06a32c7ee8b89a352}"   # master 2026-09-24, PR #8 (build with -fno-tree-vrp)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
-SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-4596a02fec1bf1759c46d22dc51ec25e9ef8a5f4}"   # master 2026-09-27, PR #15 (canonical Curve25519 encoding, strict Ed25519 decoding)
+SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-56954c810a2d208c0a20784d964e388502dcf7e0}"   # master 2026-11-20, PR #16 (prepared fused AES-GCM decrypt, VAES-256 tier, AES-GCM self-test)
 
 
 # ML-KEM-768 for the X25519MLKEM768 key exchange (a library dependency).
