@@ -39,6 +39,7 @@ project Unit_Tests is
                  "test_psk_resume.adb",
                  "test_error_from_alert.adb",
                  "test_cert_sig_algos.adb",
+                 "test_leaf_eku_policy.adb",
                  "test_key_update_ratelimit.adb",
                  "test_tickets.adb",
                  "test_reassembly.adb",
