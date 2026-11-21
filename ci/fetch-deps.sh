@@ -27,7 +27,7 @@ PARENT="$(dirname "$ROOT")"
 # Pins as of 2026-09-15. Override with the environment variable to test
 # against a different revision (e.g. SPARKTLSCRYPTO_REF=master).
 SPARKX509_URL="https://github.com/docandrew/sparkx509.git"
-SPARKX509_REF="${SPARKX509_REF:-2a33ed8b68ca69aa6e3009d06a32c7ee8b89a352}"   # master 2026-09-24, PR #8 (build with -fno-tree-vrp)
+SPARKX509_REF="${SPARKX509_REF:-24013bc33c88f9028e806216c7a397a7e60f1e6b}"   # master 2026-11-20, PR #10 (emailProtection, timeStamping, precert signing EKU getters)
 
 SPARKTLSCRYPTO_URL="https://github.com/docandrew/sparktlscrypto.git"
 SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-56954c810a2d208c0a20784d964e388502dcf7e0}"   # master 2026-11-20, PR #16 (prepared fused AES-GCM decrypt, VAES-256 tier, AES-GCM self-test)

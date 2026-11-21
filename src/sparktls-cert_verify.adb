@@ -820,6 +820,17 @@ is
             return Err_Wrong_EKU;
          end if;
 
+         --  CABF TLS BR 7.1.2.7.10: no codeSigning, emailProtection,
+         --  timeStamping, OCSPSigning or precertificate signing beside
+         --  serverAuth. The section is the Subscriber (TLS server)
+         --  Certificate profile; the TLS BRs do not govern client
+         --  certificates, so Purpose_Client and Purpose_Any leaves keep
+         --  RFC 5280's rule, which allows any extra purpose.
+         if Purpose = Purpose_Server and then Has_BR_Forbidden_Leaf_EKU (Leaf)
+         then
+            return Err_Wrong_EKU;
+         end if;
+
          --  EKU must not be critical on leaf
          if X509.Is_EKU_Critical (Leaf) then
             return Err_Wrong_EKU;

@@ -189,6 +189,8 @@ is
    --  Mode_WebPKI additionally checks:
    --    - Leaf must have EKU with serverAuth (Purpose_Server)
    --    - anyExtendedKeyUsage forbidden on leaf
+   --    - No purpose CABF TLS BR 7.1.2.7.10 forbids (Purpose_Server,
+   --      see Has_BR_Forbidden_Leaf_EKU)
    --    - EKU must not be critical
    --    - SAN extension must be present (DNS or IP)
    --    - Leaf must not be a CA
@@ -196,6 +198,24 @@ is
    --
    --  CABF BR 7.1.4.3 CN/SAN copy requirements are issuance rules
    --  and are not enforced by the consumer validator.
+
+   --  CA/Browser Forum TLS Baseline Requirements 7.1.2.7.10, Subscriber
+   --  Certificate Extended Key Usage (v2.3.1, the requirements table):
+   --  https://cabforum.org/working-groups/server/baseline-requirements/requirements/#712710-subscriber-certificate-extended-key-usage
+   --  id-kp-serverAuth MUST be present and id-kp-clientAuth MAY be; these
+   --  purposes MUST NOT be: id-kp-codeSigning, id-kp-emailProtection,
+   --  id-kp-timeStamping, id-kp-OCSPSigning, anyExtendedKeyUsage and
+   --  Precertificate Signing Certificate (1.3.6.1.4.1.11129.2.4.4). Any
+   --  other value is NOT RECOMMENDED and stays accepted. RFC 5280
+   --  4.2.1.12 forbids none of them, so only Mode_WebPKI applies this.
+   function Has_BR_Forbidden_Leaf_EKU (Leaf : X509.Certificate) return Boolean
+   is (X509.Has_EKU_Code_Signing (Leaf)
+       or else X509.Has_EKU_Email_Protection (Leaf)
+       or else X509.Has_EKU_Time_Stamping (Leaf)
+       or else X509.Has_EKU_OCSP_Signing (Leaf)
+       or else X509.Has_EKU_Any_Purpose (Leaf)
+       or else X509.Has_EKU_Precert_Signing (Leaf));
+
    function Validate_Leaf_Policy
      (Leaf     : X509.Certificate;
       Leaf_DER : X509.Byte_Seq;
@@ -224,6 +244,12 @@ is
          (if Mode = Mode_WebPKI
             and then Purpose = Purpose_Server
             and then not X509.Has_EKU (Leaf)
+          then Validate_Leaf_Policy'Result /= Valid)
+       and
+         --  WebPKI: a purpose CABF TLS BR 7.1.2.7.10 forbids -> reject
+         (if Mode = Mode_WebPKI
+            and then Purpose = Purpose_Server
+            and then Has_BR_Forbidden_Leaf_EKU (Leaf)
           then Validate_Leaf_Policy'Result /= Valid)
        and
          --  WebPKI: CA cert as leaf â reject
